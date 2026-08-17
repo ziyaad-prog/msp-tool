@@ -1,0 +1,77 @@
+{
+  "QuickHealthCheck": {
+    "Description": "Fast diagnostic snapshot for triage calls",
+    "Tools": [
+      "MspDiagSystemInfo",
+      "MspDiagNetwork",
+      "MspSecDefenderStatus",
+      "MspSecFirewall",
+      "MspSetupHostname"
+    ]
+  },
+  "FullMaintenance": {
+    "Description": "Standard monthly maintenance bundle",
+    "Tools": [
+      "MspSetupRestorePoint",
+      "MspMaintTempCleanup",
+      "MspMaintOptimize",
+      "MspMaintWindowsUpdate",
+      "MspSecDefenderScan",
+      "MspDiagEventLog"
+    ]
+  },
+  "SecurityAudit": {
+    "Description": "Security posture review",
+    "Tools": [
+      "MspSecDefenderStatus",
+      "MspSecFirewall",
+      "MspSecBitLocker",
+      "MspSecLocalAdmins",
+      "MspDiagEventLog"
+    ]
+  },
+  "RepairBundle": {
+    "Description": "Common repair sequence (DISM then SFC)",
+    "Tools": [
+      "MspSetupRestorePoint",
+      "MspRepairDISM",
+      "MspRepairSFC"
+    ]
+  },
+  "NewWorkstation": {
+    "Description": "Baseline setup for new machines",
+    "Tools": [
+      "MspSetupRestorePoint",
+      "MspSetupPowerPlan",
+      "MspSetupTimeSync",
+      "MspMaintTempCleanup",
+      "MspSecDefenderScan",
+      "MspMaintWindowsUpdate"
+    ]
+  },
+  "PerformanceTroubleshooting": {
+    "Description": "LENET performance procedure - automated tools only (use -Procedure for full SOP)",
+    "Tools": [
+      "MspPerfSpecCheck",
+      "MspPerfResourceSnapshot",
+      "MspPerfTopProcesses",
+      "MspPerfDismFull",
+      "MspRepairSFC",
+      "MspPerfManufacturerInfo",
+      "MspPerfStartupAudit",
+      "MspPerfClearUserTemp",
+      "MspMaintDiskCleanup",
+      "MspMaintTempCleanup",
+      "MspPerfDiskSpaceCheck",
+      "MspPerfRecentUpdates"
+    ]
+  },
+  "PerformanceSpecCheck": {
+    "Description": "Quick hardware spec validation only",
+    "Tools": [
+      "MspPerfSpecCheck",
+      "MspPerfDiskSpaceCheck",
+      "MspSetupHostname"
+    ]
+  }
+}

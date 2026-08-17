@@ -1,0 +1,198 @@
+{
+  "PerformanceTroubleshooting": {
+    "Title": "Check Performance Issues",
+    "Description": "LENET procedure when EVERYTHING is slow on a computer (not just mail, one app, or internet).",
+    "Keywords": ["Performance", "computer", "slow", "windows", "CPU", "usage", "PC", "memory"],
+    "Reference": "LENET - TECHNO STACK - V3.0",
+    "Sections": [
+      {
+        "Title": "1 - Spec Recommendation",
+        "Description": "If the computer is below recommendations, the issue may be hardware. If above ALL specs, proceed to troubleshooting.",
+        "Steps": [
+          {
+            "Id": "spec-check",
+            "Type": "tool",
+            "ToolId": "MspPerfSpecCheck",
+            "Title": "Check hardware against LENET spec recommendations",
+            "Instructions": "Review SSD/HDD, CPU, RAM, and workstation age. Inform user if HDD or under-spec."
+          },
+          {
+            "Id": "spec-cwa-storage",
+            "Type": "manual",
+            "Title": "Verify storage in ConnectWise Automate (CWA)",
+            "Instructions": "CWA > Storage tile > Media Type. SSD = Good. HDD or Other (confirm model) = performance bottleneck. Inform user they should upgrade to SSD."
+          },
+          {
+            "Id": "spec-cpu-benchmark",
+            "Type": "manual",
+            "Title": "CPU benchmark lookup",
+            "Instructions": "Search CPU at https://www.cpubenchmark.net/cpu_list.php — Score < 4000 = bad, > 4000 = okay, > 5000 = very good."
+          },
+          {
+            "Id": "spec-warranty",
+            "Type": "manual",
+            "Title": "Warranty / age decision",
+            "Instructions": "< 1 year: run troubleshooting, warranty may apply if steps fail. 1-3 years: consult support leader/account manager if we sold it. > 4 years: recommend replacement (2021+ spec requirements)."
+          }
+        ]
+      },
+      {
+        "Title": "2 - Troubleshooting: CPU & Memory",
+        "Steps": [
+          {
+            "Id": "resource-snapshot",
+            "Type": "tool",
+            "ToolId": "MspPerfResourceSnapshot",
+            "Title": "CPU & Memory snapshot",
+            "Instructions": "If consistently > 90%, investigate top processes. Chrome with many tabs, high svchost = patch/driver issue."
+          },
+          {
+            "Id": "resource-monitor",
+            "Type": "tool",
+            "ToolId": "MspPerfOpenResourceMonitor",
+            "Title": "Open Resource Monitor",
+            "Instructions": "Review CPU, Memory, Disk tabs. Kill problematic process as temp fix; apply patches for svchost issues."
+          },
+          {
+            "Id": "top-processes",
+            "Type": "tool",
+            "ToolId": "MspPerfTopProcesses",
+            "Title": "Top CPU & memory processes",
+            "Instructions": "Identify resource hogs. Try driver updates and Windows Update before Patch My PC."
+          }
+        ]
+      },
+      {
+        "Title": "2 - Tools to Speed Up & Fix Issues",
+        "Steps": [
+          {
+            "Id": "backstage-note",
+            "Type": "manual",
+            "Title": "ScreenConnect Backstage (optional)",
+            "Instructions": "Right-click workstation > Join with Options > Join backstageCalls > Join session. Backstage runs as SYSTEM (admin). Use for remote work without bothering the client."
+          },
+          {
+            "Id": "dism-full",
+            "Type": "tool",
+            "ToolId": "MspPerfDismFull",
+            "Title": "SFC and DISM scan (full sequence)",
+            "Instructions": "Run in CMD or Backstage. Screenshot results of every command."
+          },
+          {
+            "Id": "sfc-scan",
+            "Type": "tool",
+            "ToolId": "MspRepairSFC",
+            "Title": "System File Checker (SFC)",
+            "Instructions": "Run after DISM sequence completes."
+          },
+          {
+            "Id": "driver-cwa",
+            "Type": "manual",
+            "Title": "Driver updates in CWA",
+            "Instructions": "Tiles > Patching > filter Category to Drivers. Keywords: firmware, system component, Extension, AMD/Intel, network, audio. Install one-by-one; check Jobs menu for success. Ask user to restart in 1-2 hours."
+          },
+          {
+            "Id": "manufacturer-tool",
+            "Type": "tool",
+            "ToolId": "MspPerfManufacturerInfo",
+            "Title": "Manufacturer support & driver tools",
+            "Instructions": "Serial from ScreenConnect General section. Run HP Support Assistant, Dell Command Update, or Lenovo System Update. Ask senior/SOC leader before network or BIOS updates."
+          },
+          {
+            "Id": "patch-my-pc",
+            "Type": "manual",
+            "Title": "Patch My PC",
+            "Instructions": "Run available software updates from Patch My PC."
+          },
+          {
+            "Id": "startup-audit",
+            "Type": "tool",
+            "ToolId": "MspPerfStartupAudit",
+            "Title": "Audit startup applications",
+            "Instructions": "Disable unnecessary startup apps. Do NOT disable Adobe, driver services (Broadcom, Realtek, Intel, AD), or LENET services. Ask senior if unsure."
+          },
+          {
+            "Id": "services-audit",
+            "Type": "tool",
+            "ToolId": "MspPerfServicesAudit",
+            "Title": "Audit non-Microsoft services",
+            "Instructions": "Win+R > msconfig > Services. Disable unnecessary non-Microsoft services with same exclusions as startup."
+          },
+          {
+            "Id": "clear-user-temp",
+            "Type": "tool",
+            "ToolId": "MspPerfClearUserTemp",
+            "Title": "Clear user temp folder (%temp%)",
+            "Instructions": "Select all (Ctrl+A), delete. Skip files requiring admin. Check 'Do this for all current items'."
+          },
+          {
+            "Id": "disk-cleanup",
+            "Type": "tool",
+            "ToolId": "MspMaintDiskCleanup",
+            "Title": "Disk cleanup",
+            "Instructions": "Also consider WinDirStat for storage analysis. IMUSA: see ITB KB for additional cleanup."
+          },
+          {
+            "Id": "temp-cleanup",
+            "Type": "tool",
+            "ToolId": "MspMaintTempCleanup",
+            "Title": "Clear system temp files",
+            "Instructions": "Removes aged temp files from system locations."
+          }
+        ]
+      },
+      {
+        "Title": "3 - Slow Startup (perf OK but slow boot)",
+        "Steps": [
+          {
+            "Id": "disk-space",
+            "Type": "tool",
+            "ToolId": "MspPerfDiskSpaceCheck",
+            "Title": "Check disk free space",
+            "Instructions": "Less than 20% free can cause slow startup. Follow disk cleanup if low."
+          }
+        ]
+      },
+      {
+        "Title": "5 - Failed Patching Check",
+        "Steps": [
+          {
+            "Id": "recent-updates",
+            "Type": "tool",
+            "ToolId": "MspPerfRecentUpdates",
+            "Title": "Recent Windows updates installed",
+            "Instructions": "Cross-reference with CWA: Tiles > Patching > History. Filter Failed/In Progress around incident date. Consider uninstalling problematic KB/driver."
+          },
+          {
+            "Id": "cwa-patching-history",
+            "Type": "manual",
+            "Title": "CWA patching history",
+            "Instructions": "ConnectWise Automate > ComputerName > Tiles > Patching > History. Filter Failed/In Progress for dates around when issue started."
+          }
+        ]
+      },
+      {
+        "Title": "6 - Failed ImmyBot Session Check",
+        "Steps": [
+          {
+            "Id": "immybot-check",
+            "Type": "manual",
+            "Title": "Check ImmyBot failed sessions",
+            "Instructions": "ImmyBot > Sessions > filter Failed + date range + computer name. Review failed action and error. Check C:\\ProgramData\\ImmyBot\\Logs on workstation if needed."
+          }
+        ]
+      },
+      {
+        "Title": "Process Explorer (optional analysis)",
+        "Steps": [
+          {
+            "Id": "process-explorer",
+            "Type": "manual",
+            "Title": "Process Explorer",
+            "Instructions": "Toolbox Level 1 or download Sysinternals. Sort by Working Set for memory. Options > Configure Colors (dark purple = investigate). Right-click > Properties for autostart location. Can run in Backstage."
+          }
+        ]
+      }
+    ]
+  }
+}

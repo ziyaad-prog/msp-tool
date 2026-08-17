@@ -1,0 +1,299 @@
+{
+  "MspDiagSystemInfo": {
+    "Content": "Export System Information",
+    "Description": "Collects OS, hardware, disk, and network details to a text report.",
+    "category": "Diagnostics",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$reportDir = Join-Path $env:USERPROFILE 'Desktop\\MSP-Reports'\nif (-not (Test-Path $reportDir)) { New-Item -ItemType Directory -Path $reportDir -Force | Out-Null }\n$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'\n$out = Join-Path $reportDir \"system-info-$stamp.txt\"\n$info = @()\n$info += \"=== MSP System Report ===\"\n$info += \"Generated: $(Get-Date)\"\n$info += \"Computer: $env:COMPUTERNAME\"\n$info += \"User: $env:USERNAME\"\n$info += \"\"\n$info += \"--- OS ---\"\nGet-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, LastBootUpTime, TotalVisibleMemorySize, FreePhysicalMemory | Format-List | Out-String | ForEach-Object { $info += $_ }\n$info += \"--- CPU ---\"\nGet-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-List | Out-String | ForEach-Object { $info += $_ }\n$info += \"--- Disks ---\"\nGet-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | Select-Object DeviceID, @{N='SizeGB';E={[math]::Round($_.Size/1GB,2)}}, @{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,2)}}, FileSystem | Format-Table -AutoSize | Out-String | ForEach-Object { $info += $_ }\n$info += \"--- Network Adapters ---\"\nGet-NetAdapter | Where-Object Status -eq 'Up' | Select-Object Name, InterfaceDescription, LinkSpeed, MacAddress | Format-Table -AutoSize | Out-String | ForEach-Object { $info += $_ }\n$info | Out-File -FilePath $out -Encoding UTF8\nWrite-Host \"Report saved: $out\""
+    ]
+  },
+  "MspDiagEventLog": {
+    "Content": "Export Critical Event Logs (24h)",
+    "Description": "Exports Application and System error/critical events from the last 24 hours.",
+    "category": "Diagnostics",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$reportDir = Join-Path $env:USERPROFILE 'Desktop\\MSP-Reports'\nif (-not (Test-Path $reportDir)) { New-Item -ItemType Directory -Path $reportDir -Force | Out-Null }\n$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'\n$since = (Get-Date).AddHours(-24)\nforeach ($log in @('System','Application')) {\n  $events = Get-WinEvent -FilterHashtable @{ LogName = $log; Level = 1,2; StartTime = $since } -ErrorAction SilentlyContinue\n  $out = Join-Path $reportDir \"events-$log-$stamp.csv\"\n  if ($events) {\n    $events | Select-Object TimeCreated, Id, LevelDisplayName, ProviderName, Message | Export-Csv -Path $out -NoTypeInformation\n    Write-Host \"Exported $($events.Count) $log events to $out\"\n  } else {\n    Write-Host \"No critical $log events in last 24 hours\"\n  }\n}"
+    ]
+  },
+  "MspDiagNetwork": {
+    "Content": "Network Connectivity Test",
+    "Description": "Tests DNS resolution and ping to common endpoints (gateway, 8.8.8.8, 1.1.1.1).",
+    "category": "Diagnostics",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$targets = @('8.8.8.8','1.1.1.1','google.com')\n$gw = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop\nif ($gw) { $targets = @($gw) + $targets }\nforeach ($t in $targets) {\n  $result = Test-Connection -ComputerName $t -Count 2 -Quiet\n  $status = if ($result) { 'OK' } else { 'FAIL' }\n  Write-Host \"[$status] $t\"\n}\nWrite-Host \"DNS test: $(Resolve-DnsName google.com -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty IPAddress)\""
+    ]
+  },
+  "MspDiagDiskHealth": {
+    "Content": "Check Disk Health (SMART)",
+    "Description": "Reports disk health status using Get-PhysicalDisk.",
+    "category": "Diagnostics",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Get-PhysicalDisk | Select-Object FriendlyName, MediaType, @{N='SizeGB';E={[math]::Round($_.Size/1GB,2)}}, HealthStatus, OperationalStatus | Format-Table -AutoSize | Out-String | Write-Host"
+    ]
+  },
+  "MspMaintTempCleanup": {
+    "Content": "Clear Temp Files",
+    "Description": "Removes user and system temp files older than 7 days.",
+    "category": "Maintenance",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "$paths = @($env:TEMP, \"$env:WINDIR\\Temp\", \"$env:WINDIR\\Prefetch\")\n$cutoff = (Get-Date).AddDays(-7)\n$total = 0\nforeach ($p in $paths) {\n  if (-not (Test-Path $p)) { continue }\n  Get-ChildItem $p -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer -and $_.LastWriteTime -lt $cutoff } | ForEach-Object {\n    try { $total += $_.Length; Remove-Item $_.FullName -Force -ErrorAction Stop } catch {}\n  }\n}\nWrite-Host \"Cleaned $([math]::Round($total/1MB,2)) MB of temp files\""
+    ]
+  },
+  "MspMaintDiskCleanup": {
+    "Content": "Run Disk Cleanup",
+    "Description": "Launches cleanmgr for system drive (silent preset where supported).",
+    "category": "Maintenance",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Write-Host 'Running Disk Cleanup...'\ncleanmgr /sagerun:1 2>$null\nif ($LASTEXITCODE -ne 0) {\n  Write-Host 'Launching interactive Disk Cleanup...'\n  cleanmgr /d C:\n}\nWrite-Host 'Disk Cleanup initiated'"
+    ]
+  },
+  "MspMaintOptimize": {
+    "Content": "Optimize Drives",
+    "Description": "Runs defrag/optimize on all fixed drives.",
+    "category": "Maintenance",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Get-Volume | Where-Object DriveLetter -and DriveType -eq 'Fixed' | ForEach-Object {\n  Write-Host \"Optimizing drive $($_.DriveLetter):...\"\n  Optimize-Volume -DriveLetter $_.DriveLetter -ReTrim -Verbose\n}\nWrite-Host 'Drive optimization complete'"
+    ]
+  },
+  "MspMaintWindowsUpdate": {
+    "Content": "Check Windows Update Status",
+    "Description": "Lists pending and recently installed updates.",
+    "category": "Maintenance",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "if (Get-Module -ListAvailable PSWindowsUpdate) {\n  Get-WindowsUpdate -IsInstalled:$false -ErrorAction SilentlyContinue | Select-Object Title, Size, IsDownloaded | Format-Table -AutoSize | Out-String | Write-Host\n} else {\n  Write-Host 'PSWindowsUpdate module not installed. Checking via COM...'\n  $session = New-Object -ComObject Microsoft.Update.Session\n  $searcher = $session.CreateUpdateSearcher()\n  $result = $searcher.Search('IsInstalled=0')\n  Write-Host \"Pending updates: $($result.Updates.Count)\"\n  foreach ($u in $result.Updates) { Write-Host \"  - $($u.Title)\" }\n}"
+    ]
+  },
+  "MspSecDefenderScan": {
+    "Content": "Windows Defender Quick Scan",
+    "Description": "Starts a quick malware scan with Microsoft Defender.",
+    "category": "Security",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Write-Host 'Starting Defender quick scan...'\nStart-MpScan -ScanType QuickScan\nWrite-Host 'Defender scan started (check Security Center for results)'"
+    ]
+  },
+  "MspSecDefenderStatus": {
+    "Content": "Defender Status Report",
+    "Description": "Shows real-time protection, signature age, and last scan time.",
+    "category": "Security",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "Get-MpComputerStatus | Select-Object AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, AntivirusSignatureLastUpdated, QuickScanEndTime, FullScanEndTime | Format-List | Out-String | Write-Host"
+    ]
+  },
+  "MspSecFirewall": {
+    "Content": "Firewall Profile Status",
+    "Description": "Reports firewall state for Domain, Private, and Public profiles.",
+    "category": "Security",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction | Format-Table -AutoSize | Out-String | Write-Host"
+    ]
+  },
+  "MspSecBitLocker": {
+    "Content": "BitLocker Status",
+    "Description": "Reports encryption status for all fixed drives.",
+    "category": "Security",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Get-BitLockerVolume | Select-Object MountPoint, VolumeStatus, EncryptionPercentage, ProtectionStatus | Format-Table -AutoSize | Out-String | Write-Host"
+    ]
+  },
+  "MspSecLocalAdmins": {
+    "Content": "Audit Local Administrators",
+    "Description": "Lists members of the local Administrators group.",
+    "category": "Security",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$admins = Get-LocalGroupMember -Group 'Administrators' -ErrorAction SilentlyContinue\nif ($admins) {\n  $admins | Select-Object Name, ObjectClass, PrincipalSource | Format-Table -AutoSize | Out-String | Write-Host\n} else {\n  net localgroup Administrators\n}"
+    ]
+  },
+  "MspRepairSFC": {
+    "Content": "System File Checker (SFC)",
+    "Description": "Scans and repairs protected system files. May take 15-30 minutes.",
+    "category": "Repair",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Write-Host 'Running sfc /scannow - this may take a while...'\nsfc /scannow\nWrite-Host \"SFC exit code: $LASTEXITCODE\""
+    ]
+  },
+  "MspRepairDISM": {
+    "Content": "DISM Health Restore",
+    "Description": "Repairs the Windows component store. Run before SFC if issues persist.",
+    "category": "Repair",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Write-Host 'Running DISM RestoreHealth - this may take a while...'\nDISM /Online /Cleanup-Image /RestoreHealth\nWrite-Host \"DISM exit code: $LASTEXITCODE\""
+    ]
+  },
+  "MspRepairNetworkReset": {
+    "Content": "Reset Network Stack",
+    "Description": "Resets Winsock and IP stack. Requires reboot.",
+    "category": "Repair",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Write-Host 'Resetting network stack...'\nnetsh winsock reset\nnetsh int ip reset\nWrite-Host 'Network stack reset. A reboot is recommended.'"
+    ]
+  },
+  "MspRepairSearchIndex": {
+    "Content": "Rebuild Search Index",
+    "Description": "Restarts Windows Search and triggers index rebuild.",
+    "category": "Repair",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Stop-Service WSearch -Force -ErrorAction SilentlyContinue\nStart-Sleep -Seconds 2\nStart-Service WSearch\nWrite-Host 'Search service restarted. Index will rebuild in background.'"
+    ]
+  },
+  "MspSetupRestorePoint": {
+    "Content": "Create Restore Point",
+    "Description": "Creates a system restore point before making changes.",
+    "category": "Setup",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Checkpoint-Computer -Description 'MSP Tool - Pre-change snapshot' -RestorePointType MODIFY_SETTINGS\nWrite-Host 'Restore point created'"
+    ]
+  },
+  "MspSetupPowerPlan": {
+    "Content": "Set Balanced Power Plan",
+    "Description": "Activates the Balanced power scheme.",
+    "category": "Setup",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e\nWrite-Host 'Balanced power plan activated'"
+    ]
+  },
+  "MspSetupTimeSync": {
+    "Content": "Force Time Sync",
+    "Description": "Restarts Windows Time service and forces NTP sync.",
+    "category": "Setup",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Stop-Service w32time -Force -ErrorAction SilentlyContinue\nStart-Service w32time\nw32tm /resync /force\nWrite-Host 'Time sync completed'"
+    ]
+  },
+  "MspSetupRdpEnable": {
+    "Content": "Enable Remote Desktop",
+    "Description": "Enables RDP and configures firewall rule for remote access.",
+    "category": "Setup",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0\nEnable-NetFirewallRule -DisplayGroup 'Remote Desktop'\nWrite-Host 'Remote Desktop enabled'"
+    ]
+  },
+  "MspSetupHostname": {
+    "Content": "Show Computer Identity",
+    "Description": "Displays hostname, domain/workgroup, and serial number.",
+    "category": "Setup",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$cs = Get-CimInstance Win32_ComputerSystem\n$bios = Get-CimInstance Win32_BIOS\nWrite-Host \"Hostname: $($cs.Name)\"\nWrite-Host \"Domain/Workgroup: $($cs.Domain)\"\nWrite-Host \"Manufacturer: $($cs.Manufacturer)\"\nWrite-Host \"Model: $($cs.Model)\"\nWrite-Host \"Serial: $($bios.SerialNumber)\""
+    ]
+  },
+  "MspPerfSpecCheck": {
+    "Content": "LENET Spec Recommendation Check",
+    "Description": "Evaluates SSD/HDD, RAM, CPU, and workstation age against LENET Techno Stack V3.0 recommendations.",
+    "category": "Performance",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$issues = @()\n$warnings = @()\nWrite-Host '=== LENET Spec Recommendation Check ==='\nWrite-Host 'Reference: LENET - TECHNO STACK - V3.0'\nWrite-Host ''\n\n# Storage\nWrite-Host '--- Storage (SSD required since 2021) ---'\ntry {\n  $disks = Get-PhysicalDisk -ErrorAction Stop\n  foreach ($d in $disks) {\n    $model = $d.FriendlyName\n    $media = $d.MediaType\n    $status = 'OK'\n    if ($media -eq 'HDD') { $status = 'BAD - HDD is a performance bottleneck'; $issues += \"HDD detected: $model\" }\n    elseif ($media -eq 'Unspecified' -or $media -eq 'Unknown') {\n      if ($model -match 'SSD|NVMe|Solid') { $status = 'OK (model suggests SSD)' }\n      elseif ($model -match 'ST[0-9]|WDC WD|Hitachi|TOSHIBA.*DT|HGST') { $status = 'BAD - Model suggests HDD'; $issues += \"Possible HDD: $model\" }\n      else { $status = 'CHECK - Verify in CWA Storage tile'; $warnings += \"Media type '$media' for $model - confirm in CWA\" }\n    }\n    else { $status = 'OK' }\n    Write-Host \"  [$status] $model ($media)\"\n  }\n} catch {\n  Get-CimInstance Win32_DiskDrive | ForEach-Object {\n    $m = $_.Model\n    if ($m -match 'SSD|NVMe') { Write-Host \"  [OK] $m\" } else { Write-Host \"  [CHECK] $m - verify SSD in CWA\"; $warnings += $m }\n  }\n}\n\n# RAM\nWrite-Host ''\nWrite-Host '--- RAM ---'\n$ramGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)\nif ($ramGb -lt 8) { Write-Host \"  [BAD] ${ramGb} GB (< 8 GB minimum)\"; $issues += \"RAM ${ramGb} GB below 8 GB minimum\" }\nelseif ($ramGb -le 16) { Write-Host \"  [OK] ${ramGb} GB (>= 8 GB, good for standard users)\" }\nelse { Write-Host \"  [VERY GOOD] ${ramGb} GB (> 16 GB)\" }\n\n# CPU\nWrite-Host ''\nWrite-Host '--- CPU ---'\n$cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1)\nWrite-Host \"  CPU: $($cpu.Name)\"\nWrite-Host '  Action: Search at https://www.cpubenchmark.net/cpu_list.php'\nWrite-Host '  Score < 4000 = bad | > 4000 = okay | > 5000 = very good'\n\n# Workstation age\nWrite-Host ''\nWrite-Host '--- Workstation Age ---'\n$os = Get-CimInstance Win32_OperatingSystem\n$installDate = $os.InstallDate\nif ($installDate) {\n  $age = (New-TimeSpan -Start $installDate -End (Get-Date)).Days\n  $years = [math]::Round($age / 365, 1)\n  Write-Host \"  OS installed: $installDate ($years years ago)\"\n  if ($years -lt 1) { Write-Host '  [INFO] < 1 year - warranty likely active, run troubleshooting first' }\n  elseif ($years -ge 4) { Write-Host '  [WARN] > 4 years - recommend replacement (2021+ spec)'; $warnings += 'Workstation older than 4 years' }\n  else { Write-Host '  [INFO] 1-3 years - consult support leader if we sold this machine' }\n}\n$bios = Get-CimInstance Win32_BIOS\nWrite-Host \"  Serial (warranty lookup): $($bios.SerialNumber)\"\nWrite-Host \"  Manufacturer: $((Get-CimInstance Win32_ComputerSystem).Manufacturer)\"\n\nWrite-Host ''\nWrite-Host '=== Summary ==='\nif ($issues.Count -eq 0 -and $warnings.Count -eq 0) { Write-Host 'All automated checks passed. Proceed to troubleshooting if still slow.' }\nelse {\n  if ($issues.Count) { Write-Host 'ISSUES:'; $issues | ForEach-Object { Write-Host \"  - $_\" } }\n  if ($warnings.Count) { Write-Host 'WARNINGS:'; $warnings | ForEach-Object { Write-Host \"  - $_\" } }\n  Write-Host 'If below spec, speed-up attempts may have limited success.'\n}"
+    ]
+  },
+  "MspPerfResourceSnapshot": {
+    "Content": "CPU & Memory Snapshot",
+    "Description": "Current CPU and memory usage. Consistently > 90% indicates a performance issue.",
+    "category": "Performance",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$os = Get-CimInstance Win32_OperatingSystem\n$totalMem = $os.TotalVisibleMemorySize\n$freeMem = $os.FreePhysicalMemory\n$usedPct = [math]::Round((1 - ($freeMem / $totalMem)) * 100, 1)\nWrite-Host \"Memory usage: ${usedPct}% ($([math]::Round($freeMem/1MB,0)) MB free of $([math]::Round($totalMem/1MB,0)) MB)\"\nif ($usedPct -gt 90) { Write-Host '[ISSUE] Memory consistently high - check top processes' }\n\n$cpuSamples = @()\n1..3 | ForEach-Object { $cpuSamples += (Get-CimInstance Win32_Processor).LoadPercentage; Start-Sleep -Seconds 1 }\n$avgCpu = [math]::Round(($cpuSamples | Measure-Object -Average).Average, 1)\nWrite-Host \"CPU usage (3s avg): ${avgCpu}%\"\nif ($avgCpu -gt 90) { Write-Host '[ISSUE] CPU consistently high - check Resource Monitor' }\nWrite-Host 'Tip: Chrome with many tabs or high svchost often causes slowness. Patch/driver update may be needed.'"
+    ]
+  },
+  "MspPerfOpenResourceMonitor": {
+    "Content": "Open Resource Monitor",
+    "Description": "Launches resmon.exe to inspect CPU, Memory, Disk, and Network per process.",
+    "category": "Performance",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "Start-Process resmon.exe\nWrite-Host 'Resource Monitor opened. Check CPU/Memory/Disk tabs for processes > 90%.'"
+    ]
+  },
+  "MspPerfTopProcesses": {
+    "Content": "Top CPU & Memory Processes",
+    "Description": "Lists top resource-consuming processes. Helps identify Chrome, svchost, or other hogs.",
+    "category": "Performance",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "Write-Host '--- Top 10 by CPU ---'\nGet-Process | Sort-Object CPU -Descending | Select-Object -First 10 Name, Id, @{N='CPU_s';E={[math]::Round($_.CPU,1)}}, @{N='MemMB';E={[math]::Round($_.WorkingSet64/1MB,0)}} | Format-Table -AutoSize | Out-String | Write-Host\nWrite-Host '--- Top 10 by Memory ---'\nGet-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 10 Name, Id, @{N='MemMB';E={[math]::Round($_.WorkingSet64/1MB,0)}}, @{N='CPU_s';E={[math]::Round($_.CPU,1)}} | Format-Table -AutoSize | Out-String | Write-Host\nWrite-Host 'High svchost: try Windows Update or driver update. High Chrome: close unused tabs.'"
+    ]
+  },
+  "MspPerfDismFull": {
+    "Content": "DISM Full Sequence (scan/check/restore)",
+    "Description": "Runs dism scanhealth, checkhealth, and restorehealth. Screenshot each result.",
+    "category": "Performance",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "$cmds = @('/scanhealth','/checkhealth','/restorehealth')\nforeach ($arg in $cmds) {\n  Write-Host \"=== DISM /Online /Cleanup-Image $arg ===\"\n  $proc = Start-Process -FilePath DISM.exe -ArgumentList \"/Online /Cleanup-Image $arg\" -Wait -PassThru -NoNewWindow\n  Write-Host \"Exit code: $($proc.ExitCode)\"\n  Write-Host ''\n}\nWrite-Host 'DISM sequence complete. Run SFC next.'"
+    ]
+  },
+  "MspPerfManufacturerInfo": {
+    "Content": "Manufacturer Support & Driver Tools",
+    "Description": "Shows serial number and links to Dell/HP/Lenovo support and driver updater tools.",
+    "category": "Performance",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$cs = Get-CimInstance Win32_ComputerSystem\n$bios = Get-CimInstance Win32_BIOS\n$mfr = $cs.Manufacturer\nWrite-Host \"Manufacturer: $mfr\"\nWrite-Host \"Model: $($cs.Model)\"\nWrite-Host \"Serial: $($bios.SerialNumber) (also in ScreenConnect > General)\"\nWrite-Host ''\n$mfrLower = $mfr.ToLower()\nif ($mfrLower -match 'dell') {\n  Write-Host 'Dell Support: https://www.dell.com/support/home/en-us'\n  Write-Host 'Tools: Dell Command | Update, Dell SupportAssist'\n} elseif ($mfrLower -match 'hp|hewlett') {\n  Write-Host 'HP Support: https://support.hp.com/us-en'\n  Write-Host 'Tool: HP Support Assistant'\n} elseif ($mfrLower -match 'lenovo') {\n  Write-Host 'Lenovo Support: https://pcsupport.lenovo.com/us/en'\n  Write-Host 'Tools: Lenovo System Update, Lenovo Vantage'\n} else {\n  Write-Host 'Look up manufacturer support page using serial number above.'\n}\nWrite-Host ''\nWrite-Host 'Run Update Check + Install. Ask senior/SOC leader before network or BIOS updates.'"
+    ]
+  },
+  "MspPerfStartupAudit": {
+    "Content": "Audit Startup Applications",
+    "Description": "Lists startup programs from registry and Startup folder. Do not disable Adobe, drivers, or LENET services.",
+    "category": "Performance",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "Write-Host '--- Startup (Registry Run keys) ---'\n$paths = @('HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce','HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce')\nforeach ($p in $paths) {\n  if (Test-Path $p) {\n    Write-Host \"[$p]\"\n    Get-ItemProperty $p -ErrorAction SilentlyContinue | ForEach-Object { $_.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' } | ForEach-Object { Write-Host \"  $($_.Name) = $($_.Value)\" } }\n  }\n}\nWrite-Host ''\nWrite-Host '--- Startup Folder ---'\n@([Environment]::GetFolderPath('Startup'), \"$env:ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\") | ForEach-Object {\n  if (Test-Path $_) { Get-ChildItem $_ -ErrorAction SilentlyContinue | ForEach-Object { Write-Host \"  $_\" } }\n}\nWrite-Host ''\nWrite-Host 'Disable via Task Manager > Startup or msconfig. Ask senior if unsure.'"
+    ]
+  },
+  "MspPerfServicesAudit": {
+    "Content": "Audit Non-Microsoft Services",
+    "Description": "Lists running non-Microsoft services. Review before disabling in msconfig.",
+    "category": "Performance",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "Write-Host '--- Running Non-Microsoft Services ---'\nGet-CimInstance Win32_Service | Where-Object { $_.State -eq 'Running' -and $_.PathName -notmatch 'Windows|Microsoft|windows|system32\\\\svchost' } | Sort-Object DisplayName | Select-Object DisplayName, Name, StartMode, @{N='Path';E={if($_.PathName.Length -gt 60){$_.PathName.Substring(0,60)+'...'}else{$_.PathName}}} | Format-Table -AutoSize | Out-String | Write-Host\nWrite-Host 'Do NOT disable: Adobe, Broadcom, Realtek, Intel, AD, LENET services, driver-related.'\nWrite-Host 'Use Win+R > msconfig > Services tab to disable unnecessary items.'"
+    ]
+  },
+  "MspPerfClearUserTemp": {
+    "Content": "Clear User Temp Folder (%temp%)",
+    "Description": "Clears %temp% folder per LENET procedure. Skips locked files.",
+    "category": "Performance",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$tempPath = $env:TEMP\nWrite-Host \"Clearing: $tempPath\"\n$removed = 0; $skipped = 0\nGet-ChildItem $tempPath -Force -ErrorAction SilentlyContinue | ForEach-Object {\n  try { if ($_.PSIsContainer) { Remove-Item $_.FullName -Recurse -Force -ErrorAction Stop } else { $removed += $_.Length; Remove-Item $_.FullName -Force -ErrorAction Stop } } catch { $skipped++ }\n}\nWrite-Host \"Removed ~$([math]::Round($removed/1MB,1)) MB. Skipped $skipped locked items (OK to skip).\""
+    ]
+  },
+  "MspPerfDiskSpaceCheck": {
+    "Content": "Check Disk Free Space",
+    "Description": "Warns if any drive has less than 20% free (causes slow startup and performance).",
+    "category": "Performance",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "Write-Host '--- Disk Free Space ---'\n$issues = @()\nGet-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object {\n  $freePct = if ($_.Size -gt 0) { [math]::Round(($_.FreeSpace / $_.Size) * 100, 1) } else { 0 }\n  $status = if ($freePct -lt 20) { 'LOW - run disk cleanup'; $issues += $_.DeviceID } else { 'OK' }\n  Write-Host \"  [$status] $($_.DeviceID) ${freePct}% free ($([math]::Round($_.FreeSpace/1GB,1)) GB of $([math]::Round($_.Size/1GB,1)) GB)\"\n}\nif ($issues.Count) { Write-Host 'Less than 20% free can cause slow startup. Run disk cleanup / WinDirStat.' }"
+    ]
+  },
+  "MspPerfRecentUpdates": {
+    "Content": "Recent Windows Updates (30 days)",
+    "Description": "Lists updates installed in last 30 days. Cross-check CWA Patching History for failures.",
+    "category": "Performance",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$since = (Get-Date).AddDays(-30)\nWrite-Host \"Updates installed since $since\"\nWrite-Host 'Cross-check CWA: Tiles > Patching > History (Failed/In Progress)'\nWrite-Host ''\ntry {\n  Get-HotFix | Where-Object { $_.InstalledOn -and $_.InstalledOn -ge $since } | Sort-Object InstalledOn -Descending | Select-Object InstalledOn, HotFixID, Description | Format-Table -AutoSize | Out-String | Write-Host\n} catch {\n  Write-Host 'Could not read hotfix history. Check CWA patching history manually.'\n}"
+    ]
+  }
+}

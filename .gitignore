@@ -1,0 +1,14 @@
+# Build artifacts
+*.log
+MSP-Reports/
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Editor
+.vscode/
+.idea/
+
+# PowerShell
+*.ps1xml
