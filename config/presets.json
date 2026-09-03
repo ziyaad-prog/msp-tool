@@ -73,5 +73,12 @@
       "MspPerfDiskSpaceCheck",
       "MspSetupHostname"
     ]
+  },
+  "DomainHealthCheck": {
+    "Description": "Domain join status, secure channel health, and connectivity",
+    "Tools": [
+      "MspDomainStatus",
+      "MspDiagNetwork"
+    ]
   }
 }

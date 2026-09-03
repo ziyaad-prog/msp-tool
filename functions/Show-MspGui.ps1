@@ -1,4 +1,4 @@
-function Show-MspGui {
+﻿function Show-MspGui {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
@@ -27,36 +27,73 @@ function Show-MspGui {
         WindowStartupLocation="CenterScreen" Background="#1E1E2E">
   <Window.Resources>
     <Style TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#CDD6F4"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
       <Setter Property="FontFamily" Value="Segoe UI"/>
     </Style>
     <Style TargetType="Button">
       <Setter Property="Background" Value="#313244"/>
-      <Setter Property="Foreground" Value="#CDD6F4"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
       <Setter Property="BorderBrush" Value="#45475A"/>
       <Setter Property="Padding" Value="12,6"/>
       <Setter Property="Margin" Value="4"/>
       <Setter Property="Cursor" Value="Hand"/>
     </Style>
     <Style TargetType="CheckBox">
-      <Setter Property="Foreground" Value="#CDD6F4"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
       <Setter Property="Margin" Value="0,4"/>
     </Style>
     <Style TargetType="TextBox">
       <Setter Property="Background" Value="#313244"/>
-      <Setter Property="Foreground" Value="#CDD6F4"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
       <Setter Property="BorderBrush" Value="#45475A"/>
       <Setter Property="Padding" Value="8,6"/>
     </Style>
     <Style TargetType="ComboBox">
       <Setter Property="Background" Value="#313244"/>
-      <Setter Property="Foreground" Value="#CDD6F4"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
       <Setter Property="Padding" Value="8,4"/>
       <Setter Property="MinWidth" Value="180"/>
     </Style>
     <Style TargetType="TabItem">
-      <Setter Property="Foreground" Value="#CDD6F4"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+      <Setter Property="Background" Value="#313244"/>
+      <Setter Property="BorderBrush" Value="#45475A"/>
       <Setter Property="Padding" Value="12,8"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TabItem">
+            <Border x:Name="TabBorder" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1,1,1,0"
+                    Padding="{TemplateBinding Padding}" Margin="0,0,2,0">
+              <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="TabBorder" Property="Background" Value="#181825"/>
+                <Setter TargetName="TabBorder" Property="BorderBrush" Value="#89B4FA"/>
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="TabBorder" Property="Background" Value="#45475A"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="ComboBoxItem">
+      <Setter Property="Background" Value="#313244"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+      <Setter Property="Padding" Value="8,4"/>
+      <Style.Triggers>
+        <Trigger Property="IsHighlighted" Value="True">
+          <Setter Property="Background" Value="#45475A"/>
+          <Setter Property="Foreground" Value="#FFFFFF"/>
+        </Trigger>
+        <Trigger Property="IsSelected" Value="True">
+          <Setter Property="Background" Value="#45475A"/>
+          <Setter Property="Foreground" Value="#FFFFFF"/>
+        </Trigger>
+      </Style.Triggers>
     </Style>
   </Window.Resources>
   <Grid Margin="16">
@@ -69,6 +106,7 @@ function Show-MspGui {
     </Grid.RowDefinitions>
 
     <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
+      <Image x:Name="LogoImage" Height="40" Margin="0,0,12,0" VerticalAlignment="Center"/>
       <TextBlock Text="MSP Tool" FontSize="24" FontWeight="Bold" Foreground="#89B4FA" VerticalAlignment="Center"/>
       <TextBlock x:Name="AdminBadge" Margin="16,0,0,0" VerticalAlignment="Center" FontSize="12"/>
     </StackPanel>
@@ -86,24 +124,11 @@ function Show-MspGui {
       <Button x:Name="ClearSearchBtn" Grid.Column="3" Content="Clear Filter"/>
     </Grid>
 
-    <Grid Grid.Row="2" Margin="0,0,0,12">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="Auto"/>
-      </Grid.ColumnDefinitions>
-      <TextBlock Text="Procedure:" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="#F9E2AF"/>
-      <ComboBox x:Name="ProcedureCombo" Grid.Column="1"/>
-      <Button x:Name="RunProcedureBtn" Grid.Column="2" Content="Run Procedure (Auto)" Background="#FAB387" Foreground="#1E1E2E"/>
-      <Button x:Name="RunProcedureFullBtn" Grid.Column="3" Content="Run Procedure (Full SOP)"/>
-    </Grid>
-
-    <TabControl x:Name="CategoryTabs" Grid.Row="3" Background="#181825" BorderBrush="#45475A">
+    <TabControl x:Name="CategoryTabs" Grid.Row="2" Background="#181825" BorderBrush="#45475A">
       <TabItem Header="All Tools" Tag="All"/>
     </TabControl>
 
-    <Border Grid.Row="4" Margin="0,12,0,12" Background="#181825" BorderBrush="#45475A" BorderThickness="1" CornerRadius="4">
+    <Border Grid.Row="3" Margin="0,12,0,12" Background="#181825" BorderBrush="#45475A" BorderThickness="1" CornerRadius="4">
       <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
@@ -112,12 +137,12 @@ function Show-MspGui {
         <TextBlock Text="Output Log" Margin="8,6" FontWeight="SemiBold" Foreground="#A6E3A1"/>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="8">
           <TextBox x:Name="LogBox" IsReadOnly="True" TextWrapping="Wrap" Background="Transparent"
-                   BorderThickness="0" Foreground="#BAC2DE" FontFamily="Consolas" FontSize="12"/>
+                   BorderThickness="0" Foreground="#FFFFFF" FontFamily="Consolas" FontSize="12"/>
         </ScrollViewer>
       </Grid>
     </Border>
 
-    <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
       <Button x:Name="SelectAllBtn" Content="Select All"/>
       <Button x:Name="ClearAllBtn" Content="Clear All"/>
       <Button x:Name="RunBtn" Content="Run Selected" Background="#89B4FA" Foreground="#1E1E2E" FontWeight="Bold"/>
@@ -139,9 +164,27 @@ function Show-MspGui {
     $clearAllBtn = $window.FindName('ClearAllBtn')
     $runBtn = $window.FindName('RunBtn')
     $adminBadge = $window.FindName('AdminBadge')
-    $procedureCombo = $window.FindName('ProcedureCombo')
-    $runProcedureBtn = $window.FindName('RunProcedureBtn')
-    $runProcedureFullBtn = $window.FindName('RunProcedureFullBtn')
+    $logoImage = $window.FindName('LogoImage')
+
+    # Load logo from assets folder if present
+    $logoPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'assets\logo.png'
+    if (Test-Path $logoPath) {
+        try {
+            $bitmap = New-Object System.Windows.Media.Imaging.BitmapImage
+            $bitmap.BeginInit()
+            $bitmap.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+            $bitmap.UriSource = [Uri]::new($logoPath)
+            $bitmap.EndInit()
+            $bitmap.Freeze()
+            $logoImage.Source = $bitmap
+        }
+        catch {
+            $logoImage.Visibility = 'Collapsed'
+        }
+    }
+    else {
+        $logoImage.Visibility = 'Collapsed'
+    }
 
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if ($isAdmin) {
@@ -186,7 +229,7 @@ function Show-MspGui {
                 $cb.Content = $tool.Content
                 $cb.ToolTip = $tool.Description
                 if ($tool.RequiresAdmin -and -not $isAdmin) {
-                    $cb.Foreground = '#6C7086'
+                    $cb.Foreground = '#A6ADC8'
                     $cb.ToolTip = "$($tool.Description)`n(Requires Administrator)"
                 }
 
@@ -202,7 +245,7 @@ function Show-MspGui {
 
                 $desc = New-Object System.Windows.Controls.TextBlock
                 $desc.Text = "    $($tool.Description)"
-                $desc.Foreground = '#6C7086'
+                $desc.Foreground = '#A6ADC8'
                 $desc.FontSize = 11
                 $desc.TextWrapping = 'Wrap'
                 $desc.Margin = '24,0,0,4'

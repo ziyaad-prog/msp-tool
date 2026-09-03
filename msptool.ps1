@@ -52,11 +52,76 @@ param(
     [switch]$ListPresets,
 
     [Parameter(ParameterSetName = 'List')]
-    [switch]$ListProcedures
+    [switch]$ListProcedures,
+
+    [string]$LogFile,
+
+    [switch]$NoTranscript
 )
 
 $ErrorActionPreference = 'Stop'
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# ---------------------------------------------------------------------------
+# Logging: capture all actions, inputs, and command output to a file
+# ---------------------------------------------------------------------------
+$logDir = Join-Path $ScriptRoot 'logs'
+if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+if (-not $LogFile) {
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $LogFile = Join-Path $logDir "msp-$env:COMPUTERNAME-$stamp.log"
+}
+
+function Write-MspLog {
+    param([string]$Message)
+    $line = "[{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
+    Add-Content -Path $LogFile -Value $line -Encoding UTF8
+}
+
+function Write-MspHeader {
+    Write-MspLog "================ MSP TOOL SESSION ================"
+    Write-MspLog "Computer : $env:COMPUTERNAME"
+    Write-MspLog "User     : $env:USERDOMAIN\$env:USERNAME"
+    Write-MspLog "Started  : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    Write-MspLog "PS       : $($PSVersionTable.PSVersion)"
+    Write-MspLog "--- Invocation inputs ---"
+    foreach ($bound in $PSBoundParameters.GetEnumerator()) {
+        if ($bound.Key -eq 'LogFile') { continue }
+        Write-MspLog ("  -{0} = {1}" -f $bound.Key, ($bound.Value -join ', '))
+    }
+    if (-not $PSBoundParameters.Count -or $PSBoundParameters.Keys.Count -eq 0) {
+        Write-MspLog "  (no parameters - interactive GUI session)"
+    }
+    Write-MspLog "---------------------------------------------------"
+}
+
+Write-MspHeader
+
+if (-not $NoTranscript) {
+    try { Start-Transcript -Path "$($LogFile).transcript.txt" -Append | Out-Null } catch { }
+}
+
+
+# Auto-elevate: relaunch as Administrator if not already elevated
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-File', "`"$($MyInvocation.MyCommand.Path)`"")
+    foreach ($bound in $PSBoundParameters.GetEnumerator()) {
+        if ($bound.Value -is [switch] -and $bound.Value.IsPresent) {
+            $argList += "-$($bound.Key)"
+        }
+        else {
+            $argList += "-$($bound.Key)"; $argList += "`"$($bound.Value)`""
+        }
+    }
+    try {
+        Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -Verb RunAs
+        exit 0
+    }
+    catch {
+        Write-Warning "Elevation cancelled - continuing without admin rights (some tools will be skipped)."
+    }
+}
 
 function Get-MspConfig {
     param([string]$Name)
@@ -91,7 +156,7 @@ if ($ListTools) {
                 Admin    = [bool]$_.Value.RequiresAdmin
             }
         } | Format-Table -AutoSize
-    exit 0
+    Exit-MspSession
 }
 
 if ($ListPresets) {
@@ -104,7 +169,7 @@ if ($ListPresets) {
                 ToolCount   = $_.Value.Tools.Count
             }
         } | Format-Table -AutoSize
-    exit 0
+    Exit-MspSession
 }
 
 if ($ListProcedures) {
@@ -116,18 +181,28 @@ if ($ListProcedures) {
             Description = $proc.Description
         }
     } | Format-Table -AutoSize -Wrap
-    exit 0
+    Exit-MspSession
+}
+
+function Exit-MspSession {
+    param([int]$Code = 0)
+    if (-not $NoTranscript) { try { Stop-Transcript | Out-Null } catch { } }
+    Write-MspLog "Session ended: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    Write-MspLog "Log saved: $LogFile"
+    exit $Code
 }
 
 function Write-MspConsoleLog {
     param([string]$Message)
     Write-Host $Message
+    Write-MspLog $Message
 }
 
 if ($Procedure) {
     $procConfig = Resolve-MspProcedure -Name $Procedure
+    Write-MspLog "ACTION: Running procedure '$Procedure'"
     Invoke-MspProcedure -Procedure $procConfig -ToolConfig $toolConfig -AutoOnly:$AutoOnly -Interactive:$Interactive -OnLog { param($m) Write-MspConsoleLog $m }
-    exit 0
+    Exit-MspSession
 }
 
 if ($Preset) {
@@ -136,19 +211,23 @@ if ($Preset) {
     }
 
     $toolIds = $presetConfig[$Preset].Tools
+    Write-MspLog "ACTION: Running preset '$Preset' (tools: $($toolIds -join ', '))"
     Write-Host "Running preset: $Preset ($($toolIds.Count) tools)"
     $results = Invoke-MspToolBatch -ToolIds $toolIds -ToolConfig $toolConfig -OnLog { param($m) Write-MspConsoleLog $m }
     $ok = @($results | Where-Object Success).Count
     Write-Host "Completed: $ok/$($results.Count) succeeded"
-    exit 0
+    Write-MspLog "RESULT: Preset '$Preset' completed $ok/$($results.Count) succeeded"
+    Exit-MspSession
 }
 
 if ($Tools) {
+    Write-MspLog "ACTION: Running tools ($($Tools -join ', '))"
     Write-Host "Running $($Tools.Count) selected tool(s)"
     $results = Invoke-MspToolBatch -ToolIds $Tools -ToolConfig $toolConfig -OnLog { param($m) Write-MspConsoleLog $m }
     $ok = @($results | Where-Object Success).Count
     Write-Host "Completed: $ok/$($results.Count) succeeded"
-    exit 0
+    Write-MspLog "RESULT: Tools completed $ok/$($results.Count) succeeded"
+    Exit-MspSession
 }
 
 . (Join-Path $ScriptRoot 'functions\Show-MspGui.ps1')

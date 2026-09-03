@@ -1,0 +1,204 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20260826092443
+Username: LENET-ZIYAAD\LENET
+RunAs User: LENET-ZIYAAD\LENET
+Configuration Name: 
+Machine: LENET-ZIYAAD (Microsoft Windows NT 10.0.26200.0)
+Host Application: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File C:\Users\LENET\Projects\msp-tool\msptool.ps1
+Process ID: 1096
+PSVersion: 5.1.26100.9168
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9168
+BuildVersion: 10.0.26100.9168
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+--- Running Non-Microsoft Services ---
+
+DisplayName                              Name                                    StartMode Path                        
+-----------                              ----                                    --------- ----                        
+CyberCNSAgent                            CyberCNSAgent                           Auto      "C:\PROGRA~2\CYBERC~1\cyb...
+CyberCNSMonitoringAgent                  CyberCNSAgentMonitor                    Auto      "C:\Program Files (x86)\C...
+DDPMNetworkKVMService                    DDPMNetworkKVMService                   Auto      "C:\Program Files\Dell\De...
+Dell Client Management Service           DellClientManagementService             Auto      "C:\Program Files (x86)\D...
+Dell Peripheral Manager Service          DPMService                              Auto      "C:\Program Files\Dell\De...
+Dell SupportAssist                       SupportAssistAgent                      Auto      "C:\Program Files\Dell\Su...
+Dell SupportAssist Remediation           Dell SupportAssist Remediation          Auto      "C:\Program Files\Dell\SA...
+Dell TechHub                             DellTechHub                             Auto      "C:\Program Files\Dell\Te...
+DNS Agent                                DNS Agent                               Auto      "C:\Program Files\DNS Age...
+DNS Agent Service Manager                DNS Agent Service Manager               Auto      "C:\Program Files\DNS Age...
+Huntress Agent Service                   HuntressAgent                           Auto      "C:\Program Files\Huntres...
+Huntress Rio Service                     HuntressRio                             Auto      "C:\Program Files\Huntres...
+Huntress Updater Service                 HuntressUpdater                         Auto      "C:\Program Files\Huntres...
+ImmyBot Agent                            ImmyBot Agent                           Auto      "C:\Program Files (x86)\I...
+Netbird                                  Netbird                                 Auto      "C:\Program Files\Netbird...
+PDF24                                    PDF24                                   Auto      "C:\Program Files\PDF24\p...
+ScreenConnect Client (77fd8c77134c1026)  ScreenConnect Client (77fd8c77134c1026) Auto      "C:\Program Files (x86)\S...
+Sentinel Agent                           SentinelAgent                           Auto      "C:\Program Files\Sentine...
+SentinelHelperService                    SentinelHelperService                   Manual    "C:\Program Files\Sentine...
+SentinelOne Agent Log Processing Service LogProcessorService                     Auto      "C:\Program Files\Sentine...
+SentinelOne Static Service               SentinelStaticEngine                    Auto      "C:\Program Files\Sentine...
+Do NOT disable: Adobe, Broadcom, Realtek, Intel, AD, LENET services, driver-related.
+Use Win+R > msconfig > Services tab to disable unnecessary items.
+--- Running Non-Microsoft Services ---
+
+DisplayName                              Name                   
+-----------                              ----                   
+CyberCNSAgent                            CyberCNSAgent          
+CyberCNSMonitoringAgent                  CyberCNSAgentMonitor   
+DDPMNetworkKVMService                    DDPMNetworkKVMService  
+Dell Client Management Service           DellClientManagement...
+Dell Peripheral Manager Service          DPMService             
+Dell SupportAssist                       SupportAssistAgent     
+Dell SupportAssist Remediation           Dell SupportAssist R...
+Dell TechHub                             DellTechHub            
+DNS Agent                                DNS Agent              
+DNS Agent Service Manager                DNS Agent Service Ma...
+Huntress Agent Service                   HuntressAgent          
+Huntress Rio Service                     HuntressRio            
+Huntress Updater Service                 HuntressUpdater        
+ImmyBot Agent                            ImmyBot Agent          
+Netbird                                  Netbird                
+PDF24                                    PDF24                  
+ScreenConnect Client (77fd8c77134c1026)  ScreenConnect Client...
+Sentinel Agent                           SentinelAgent          
+SentinelHelperService                    SentinelHelperService  
+SentinelOne Agent Log Processing Service LogProcessorService    
+SentinelOne Static Service               SentinelStaticEngine
+Do NOT disable: Adobe, Broadcom, Realtek, Intel, AD, LENET services, driver-related.
+Use Win+R > msconfig > Services tab to disable unnecessary items.
+--- Running Non-Microsoft Services ---
+  [1] CyberCNSAgent (CyberCNSAgent)
+  [2] CyberCNSMonitoringAgent (CyberCNSAgentMonitor)
+  [3] DDPMNetworkKVMService (DDPMNetworkKVMService)
+  [4] Dell Client Management Service (DellClientManagementService)
+  [5] Dell Peripheral Manager Service (DPMService)
+  [6] Dell SupportAssist (SupportAssistAgent)
+  [7] Dell SupportAssist Remediation (Dell SupportAssist Remediation)
+  [8] Dell TechHub (DellTechHub)
+  [9] DNS Agent (DNS Agent)
+  [10] DNS Agent Service Manager (DNS Agent Service Manager)
+  [11] Huntress Agent Service (HuntressAgent)
+  [12] Huntress Rio Service (HuntressRio)
+  [13] Huntress Updater Service (HuntressUpdater)
+  [14] ImmyBot Agent (ImmyBot Agent)
+  [15] Netbird (Netbird)
+  [16] PDF24 (PDF24)
+  [17] ScreenConnect Client (77fd8c77134c1026) (ScreenConnect Client (77fd8c77134c1026))
+  [18] Sentinel Agent (SentinelAgent)
+  [19] SentinelHelperService (SentinelHelperService)
+  [20] SentinelOne Agent Log Processing Service (LogProcessorService)
+  [21] SentinelOne Static Service (SentinelStaticEngine)
+
+Enter service numbers to manage, separated by commas (e.g. 1,3,7). Enter 0 or press Enter to cancel:
+
+For each selected service:
+  [1] Stop only (restarts on reboot)
+  [2] Set to Manual + stop
+  [3] Cancel
+[MANUAL] PDF24 set to Manual startup
+[STOPPED] PDF24
+
+Done. Do NOT disable Adobe, drivers, or LENET/AD services.
+--- Running Non-Microsoft Services ---
+
+DisplayName                              Name                   
+-----------                              ----                   
+CyberCNSAgent                            CyberCNSAgent          
+CyberCNSMonitoringAgent                  CyberCNSAgentMonitor   
+DDPMNetworkKVMService                    DDPMNetworkKVMService  
+Dell Client Management Service           DellClientManagement...
+Dell Peripheral Manager Service          DPMService             
+Dell SupportAssist                       SupportAssistAgent     
+Dell SupportAssist Remediation           Dell SupportAssist R...
+Dell TechHub                             DellTechHub            
+DNS Agent                                DNS Agent              
+DNS Agent Service Manager                DNS Agent Service Ma...
+Huntress Agent Service                   HuntressAgent          
+Huntress Rio Service                     HuntressRio            
+Huntress Updater Service                 HuntressUpdater        
+ImmyBot Agent                            ImmyBot Agent          
+Netbird                                  Netbird                
+ScreenConnect Client (77fd8c77134c1026)  ScreenConnect Client...
+Sentinel Agent                           SentinelAgent          
+SentinelHelperService                    SentinelHelperService  
+SentinelOne Agent Log Processing Service LogProcessorService    
+SentinelOne Static Service               SentinelStaticEngine
+Do NOT disable: Adobe, Broadcom, Realtek, Intel, AD, LENET services, driver-related.
+Use Win+R > msconfig > Services tab to disable unnecessary items.
+--- Running Non-Microsoft Services ---
+  [1] CyberCNSAgent (CyberCNSAgent)
+  [2] CyberCNSMonitoringAgent (CyberCNSAgentMonitor)
+  [3] DDPMNetworkKVMService (DDPMNetworkKVMService)
+  [4] Dell Client Management Service (DellClientManagementService)
+  [5] Dell Peripheral Manager Service (DPMService)
+  [6] Dell SupportAssist (SupportAssistAgent)
+  [7] Dell SupportAssist Remediation (Dell SupportAssist Remediation)
+  [8] Dell TechHub (DellTechHub)
+  [9] DNS Agent (DNS Agent)
+  [10] DNS Agent Service Manager (DNS Agent Service Manager)
+  [11] Huntress Agent Service (HuntressAgent)
+  [12] Huntress Rio Service (HuntressRio)
+  [13] Huntress Updater Service (HuntressUpdater)
+  [14] ImmyBot Agent (ImmyBot Agent)
+  [15] Netbird (Netbird)
+  [16] ScreenConnect Client (77fd8c77134c1026) (ScreenConnect Client (77fd8c77134c1026))
+  [17] Sentinel Agent (SentinelAgent)
+  [18] SentinelHelperService (SentinelHelperService)
+  [19] SentinelOne Agent Log Processing Service (LogProcessorService)
+  [20] SentinelOne Static Service (SentinelStaticEngine)
+
+Enter service numbers to manage, separated by commas (e.g. 1,3,7). Enter 0 or press Enter to cancel:
+Cancelled.
+--- Running Non-Microsoft Services ---
+
+DisplayName                              Name                   
+-----------                              ----                   
+CyberCNSAgent                            CyberCNSAgent          
+CyberCNSMonitoringAgent                  CyberCNSAgentMonitor   
+DDPMNetworkKVMService                    DDPMNetworkKVMService  
+Dell Client Management Service           DellClientManagement...
+Dell Peripheral Manager Service          DPMService             
+Dell SupportAssist                       SupportAssistAgent     
+Dell SupportAssist Remediation           Dell SupportAssist R...
+Dell TechHub                             DellTechHub            
+DNS Agent                                DNS Agent              
+DNS Agent Service Manager                DNS Agent Service Ma...
+Huntress Agent Service                   HuntressAgent          
+Huntress Rio Service                     HuntressRio            
+Huntress Updater Service                 HuntressUpdater        
+ImmyBot Agent                            ImmyBot Agent          
+Netbird                                  Netbird                
+ScreenConnect Client (77fd8c77134c1026)  ScreenConnect Client...
+Sentinel Agent                           SentinelAgent          
+SentinelHelperService                    SentinelHelperService  
+SentinelOne Agent Log Processing Service LogProcessorService    
+SentinelOne Static Service               SentinelStaticEngine
+Do NOT disable: Adobe, Broadcom, Realtek, Intel, AD, LENET services, driver-related.
+Use Win+R > msconfig > Services tab to disable unnecessary items.
+--- Running Non-Microsoft Services ---
+  [1] CyberCNSAgent (CyberCNSAgent)
+  [2] CyberCNSMonitoringAgent (CyberCNSAgentMonitor)
+  [3] DDPMNetworkKVMService (DDPMNetworkKVMService)
+  [4] Dell Client Management Service (DellClientManagementService)
+  [5] Dell Peripheral Manager Service (DPMService)
+  [6] Dell SupportAssist (SupportAssistAgent)
+  [7] Dell SupportAssist Remediation (Dell SupportAssist Remediation)
+  [8] Dell TechHub (DellTechHub)
+  [9] DNS Agent (DNS Agent)
+  [10] DNS Agent Service Manager (DNS Agent Service Manager)
+  [11] Huntress Agent Service (HuntressAgent)
+  [12] Huntress Rio Service (HuntressRio)
+  [13] Huntress Updater Service (HuntressUpdater)
+  [14] ImmyBot Agent (ImmyBot Agent)
+  [15] Netbird (Netbird)
+  [16] ScreenConnect Client (77fd8c77134c1026) (ScreenConnect Client (77fd8c77134c1026))
+  [17] Sentinel Agent (SentinelAgent)
+  [18] SentinelHelperService (SentinelHelperService)
+  [19] SentinelOne Agent Log Processing Service (LogProcessorService)
+  [20] SentinelOne Static Service (SentinelStaticEngine)
+
+Enter service numbers to manage, separated by commas (e.g. 1,3,7). Enter 0 or press Enter to cancel:

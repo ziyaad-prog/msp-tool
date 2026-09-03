@@ -68,7 +68,7 @@
     "category": "Maintenance",
     "RequiresAdmin": true,
     "InvokeScript": [
-      "if (Get-Module -ListAvailable PSWindowsUpdate) {\n  Get-WindowsUpdate -IsInstalled:$false -ErrorAction SilentlyContinue | Select-Object Title, Size, IsDownloaded | Format-Table -AutoSize | Out-String | Write-Host\n} else {\n  Write-Host 'PSWindowsUpdate module not installed. Checking via COM...'\n  $session = New-Object -ComObject Microsoft.Update.Session\n  $searcher = $session.CreateUpdateSearcher()\n  $result = $searcher.Search('IsInstalled=0')\n  Write-Host \"Pending updates: $($result.Updates.Count)\"\n  foreach ($u in $result.Updates) { Write-Host \"  - $($u.Title)\" }\n}"
+      "if (-not (Get-Module -ListAvailable PSWindowsUpdate)) {\n  Write-Host 'PSWindowsUpdate module not installed. Installing from PowerShell Gallery...'\n  try {\n    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12\n    if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) { Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null }\n    Install-Module PSWindowsUpdate -Force -Scope CurrentUser -ErrorAction Stop\n    Write-Host 'PSWindowsUpdate installed successfully.' -ForegroundColor Green\n  } catch { Write-Host \"Failed to install PSWindowsUpdate: $($_.Exception.Message)\" -ForegroundColor Red; return }\n}\nImport-Module PSWindowsUpdate -ErrorAction SilentlyContinue\nGet-WindowsUpdate -IsInstalled:$false -ErrorAction SilentlyContinue | Select-Object Title, Size, IsDownloaded | Format-Table -AutoSize | Out-String | Write-Host"
     ]
   },
   "MspSecDefenderScan": {
@@ -197,6 +197,42 @@
       "$cs = Get-CimInstance Win32_ComputerSystem\n$bios = Get-CimInstance Win32_BIOS\nWrite-Host \"Hostname: $($cs.Name)\"\nWrite-Host \"Domain/Workgroup: $($cs.Domain)\"\nWrite-Host \"Manufacturer: $($cs.Manufacturer)\"\nWrite-Host \"Model: $($cs.Model)\"\nWrite-Host \"Serial: $($bios.SerialNumber)\""
     ]
   },
+  "MspDomainStatus": {
+    "Content": "Domain Join Status",
+    "Description": "Shows if the workstation is domain joined, the domain name, and secure channel health.",
+    "category": "Domain",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$cs = Get-CimInstance Win32_ComputerSystem\nWrite-Host \"Computer Name : $env:COMPUTERNAME\"\nif ($cs.PartOfDomain) {\n  Write-Host \"Domain Joined : YES\" -ForegroundColor Green\n  Write-Host \"Domain        : $($cs.Domain)\"\n  try {\n    if (Test-ComputerSecureChannel) { Write-Host 'Secure Channel: HEALTHY' -ForegroundColor Green }\n    else { Write-Host 'Secure Channel: BROKEN - run repair tool or rejoin' -ForegroundColor Red }\n    $detail = Test-ComputerSecureChannel -Detailed\n    Write-Host \"DC Contacted  : $($detail.Server)\"\n  } catch { Write-Host \"Secure Channel: ERROR - $($_.Exception.Message)\" -ForegroundColor Red }\n} else {\n  Write-Host \"Domain Joined : NO\" -ForegroundColor Yellow\n  Write-Host \"Workgroup     : $($cs.Domain)\" -ForegroundColor Yellow\n}"
+    ]
+  },
+  "MspDomainConnectivity": {
+    "Content": "Domain Connectivity Test",
+    "Description": "Tests DNS resolution, DC discovery, and LDAP port 389 reachability for a domain.",
+    "category": "Domain",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$domain = Read-Host 'Enter target domain FQDN (e.g. corp.contoso.com)'\nif ($domain) {\n  try {\n    $ips = [System.Net.Dns]::GetHostAddresses($domain) | Where-Object AddressFamily -eq 'InterNetwork'\n    if (-not $ips) { throw 'no A records' }\n    Write-Host \"[OK] DNS      : $domain -> $($ips[0].IPAddressToString)\" -ForegroundColor Green\n  } catch { Write-Host \"[FAIL] DNS    : cannot resolve '$domain'. Check DNS config.\" -ForegroundColor Red; return }\n  try {\n    $ctx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext([System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain)\n    $ad = [System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($ctx)\n    $dc = $ad.DomainControllers | Select-Object -First 1\n    Write-Host \"[OK] DC found : $($dc.Name)\" -ForegroundColor Green\n    $tcp = New-Object System.Net.Sockets.TcpClient\n    if (-not $tcp.ConnectAsync($dc.IPAddress, 389).Wait(5000)) { throw \"LDAP timeout on $($dc.IPAddress)\" }\n    $tcp.Close()\n    Write-Host \"[OK] LDAP     : $($dc.IPAddress):389 reachable\" -ForegroundColor Green\n    Write-Host '' -ForegroundColor Green\n    Write-Host \"SUCCESS: Workstation can reach domain '$domain'.\" -ForegroundColor Green\n  } catch { Write-Host \"[FAIL] AD     : $($_.Exception.Message)\" -ForegroundColor Red }\n}"
+    ]
+  },
+  "MspDomainJoin": {
+    "Content": "Join Workstation to Domain",
+    "Description": "Prompts for domain FQDN and admin credentials, verifies connectivity, then joins the domain.",
+    "category": "Domain",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "$cs = Get-CimInstance Win32_ComputerSystem\nif ($cs.PartOfDomain) { Write-Host \"Already joined to '$($cs.Domain)'. Nothing to do.\" -ForegroundColor Yellow; return }\n$domain = Read-Host 'Enter target domain FQDN (e.g. corp.contoso.com)'\nif (-not $domain) { Write-Host 'No domain entered - aborted.' -ForegroundColor Yellow; return }\ntry {\n  $ctx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext([System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain)\n  [void][System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($ctx)\n  Write-Host \"[OK] Domain reachable: $domain\" -ForegroundColor Green\n} catch { Write-Host \"Cannot reach domain '$domain': $($_.Exception.Message)\" -ForegroundColor Red; return }\n$cred = Get-Credential -Message \"Account with rights to join $domain\"\nif (-not $cred) { Write-Host 'Credentials required - aborted.' -ForegroundColor Yellow; return }\n$ou = Read-Host 'Target OU path (optional, press Enter to skip, e.g. OU=Workstations,DC=corp,DC=contoso,DC=com)'\n$params = @{ DomainName = $domain; Credential = $cred; Force = $true; ErrorAction = 'Stop' }\nif ($ou) { $params['OU'] = $ou }\ntry {\n  Add-Computer @params\n  Write-Host \"SUCCESS: Joined domain '$domain'. A restart is required to finish.\" -ForegroundColor Green\n  $r = Read-Host 'Restart now? (Y/n)'\n  if ($r -notmatch '^n') { Restart-Computer -Force } else { Write-Host 'Reboot later to complete the join.' -ForegroundColor Yellow }\n} catch { Write-Host \"FAILED to join domain: $($_.Exception.Message)\" -ForegroundColor Red }"
+    ]
+  },
+  "MspDomainSecureRepair": {
+    "Content": "Repair Domain Secure Channel",
+    "Description": "Tests and repairs the machine account trust with the domain (fixes 'trust relationship failed').",
+    "category": "Domain",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "$cs = Get-CimInstance Win32_ComputerSystem\nif (-not $cs.PartOfDomain) { Write-Host 'Workstation is not domain joined.' -ForegroundColor Yellow; return }\nWrite-Host \"Testing secure channel for domain '$($cs.Domain)'...\"\nif (Test-ComputerSecureChannel) {\n  Write-Host 'Secure channel is HEALTHY - no repair needed.' -ForegroundColor Green\n} else {\n  Write-Host 'Secure channel is BROKEN - repairing...' -ForegroundColor Yellow\n  if (Test-ComputerSecureChannel -Repair) {\n    Write-Host 'Secure channel repaired successfully.' -ForegroundColor Green\n    $r = Read-Host 'Restart now? (Y/n)'\n    if ($r -notmatch '^n') { Restart-Computer -Force }\n  } else {\n    Write-Host 'Repair failed - leave and rejoin the domain instead.' -ForegroundColor Red\n  }\n}"
+    ]
+  },
   "MspPerfSpecCheck": {
     "Content": "LENET Spec Recommendation Check",
     "Description": "Evaluates SSD/HDD, RAM, CPU, and workstation age against LENET Techno Stack V3.0 recommendations.",
@@ -267,6 +303,15 @@
     "RequiresAdmin": false,
     "InvokeScript": [
       "Write-Host '--- Running Non-Microsoft Services ---'\nGet-CimInstance Win32_Service | Where-Object { $_.State -eq 'Running' -and $_.PathName -notmatch 'Windows|Microsoft|windows|system32\\\\svchost' } | Sort-Object DisplayName | Select-Object DisplayName, Name, StartMode, @{N='Path';E={if($_.PathName.Length -gt 60){$_.PathName.Substring(0,60)+'...'}else{$_.PathName}}} | Format-Table -AutoSize | Out-String | Write-Host\nWrite-Host 'Do NOT disable: Adobe, Broadcom, Realtek, Intel, AD, LENET services, driver-related.'\nWrite-Host 'Use Win+R > msconfig > Services tab to disable unnecessary items.'"
+    ]
+  },
+  "MspPerfServiceControl": {
+    "Content": "Manage Non-Microsoft Services",
+    "Description": "Select running non-Microsoft services and stop them or set startup to Manual.",
+    "category": "Performance",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "$services = Get-CimInstance Win32_Service | Where-Object { $_.State -eq 'Running' -and $_.PathName -notmatch 'Windows|Microsoft|windows|system32\\\\svchost' } | Sort-Object DisplayName\nif (-not $services) { Write-Host 'No running non-Microsoft services found.' -ForegroundColor Green; return }\nWrite-Host '--- Running Non-Microsoft Services ---'\n$i = 0\nforeach ($s in $services) { $i++; Write-Host (\"  [{0}] {1} ({2})\" -f $i, $s.DisplayName, $s.Name) }\nWrite-Host ''\nWrite-Host 'Enter service numbers to manage, separated by commas (e.g. 1,3,7). Enter 0 or press Enter to cancel:'\n$sel = Read-Host 'Selection'\nif (-not $sel -or $sel -eq '0') { Write-Host 'Cancelled.' -ForegroundColor Yellow; return }\n$indexes = $sel -split ',' | ForEach-Object { [int]$_.Trim() } | Where-Object { $_ -ge 1 -and $_ -le $i }\nif (-not $indexes) { Write-Host 'No valid selection.' -ForegroundColor Yellow; return }\n$chosen = @($indexes | ForEach-Object { $services[$_-1] })\nWrite-Host ''\nWrite-Host 'For each service you will be prompted:'\nWrite-Host '  [1] Open services.msc (Services console)'\nWrite-Host '  [2] Stop only (restarts on reboot)'\nWrite-Host '  [3] Set to Manual + stop'\nWrite-Host '  [4] Skip this service'\nWrite-Host '  [5] Cancel remaining'\nWrite-Host ''\nforeach ($s in $chosen) {\n  Write-Host (\"--- {0} ({1}) | Startup: {2} ---\" -f $s.DisplayName, $s.Name, $s.StartMode)\n  $action = Read-Host 'Action'\n  switch ($action) {\n    '1' { Start-Process services.msc; Write-Host \"[OPENED] services.msc - press Enter to continue with $($s.DisplayName)\" -ForegroundColor Green; Read-Host | Out-Null }\n    '2' { try { Stop-Service -Name $s.Name -Force -ErrorAction Stop; Write-Host \"[STOPPED] $($s.DisplayName)\" -ForegroundColor Green } catch { Write-Host \"[FAILED] $($s.DisplayName): $($_.Exception.Message)\" -ForegroundColor Red } }\n    '3' { try { Set-Service -Name $s.Name -StartupType Manual -ErrorAction Stop; Stop-Service -Name $s.Name -Force -ErrorAction Stop; Write-Host \"[MANUAL + STOPPED] $($s.DisplayName)\" -ForegroundColor Green } catch { Write-Host \"[FAILED] $($s.DisplayName): $($_.Exception.Message)\" -ForegroundColor Red } }\n    '4' { Write-Host \"[SKIPPED] $($s.DisplayName)\" -ForegroundColor Yellow }\n    '5' { Write-Host 'Cancelling remaining services.' -ForegroundColor Yellow; return }\n    default { Write-Host \"[SKIPPED] $($s.DisplayName) (no valid choice)\" -ForegroundColor Yellow }\n  }\n  Write-Host ''\n}\nWrite-Host 'Done. Do NOT disable Adobe, drivers, or LENET/AD services.'"
     ]
   },
   "MspPerfClearUserTemp": {

@@ -1,0 +1,21 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20260831143155
+Username: LENET-ZIYAAD\LENET
+RunAs User: LENET-ZIYAAD\LENET
+Configuration Name: 
+Machine: LENET-ZIYAAD (Microsoft Windows NT 10.0.26200.0)
+Host Application: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.EXE
+Process ID: 21832
+PSVersion: 5.1.26100.9168
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9168
+BuildVersion: 10.0.26100.9168
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+PS C:\Users\LENET\Projects\msp-tool> .\msptool.ps1
+PS C:\Users\LENET\Projects\msp-tool> .\msptool.ps1
+PS C:\Users\LENET\Projects\msp-tool> .\msptool.ps1 -tools mspperfservicecontrol
