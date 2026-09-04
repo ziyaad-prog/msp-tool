@@ -242,6 +242,15 @@
       "$vpns = @()\ntry { $vpns += Get-VpnConnection -AllUserConnection -ErrorAction SilentlyContinue } catch { }\ntry { $vpns += Get-VpnConnection -ErrorAction SilentlyContinue } catch { }\n$vpns = @($vpns | Sort-Object Name -Unique)\nif (-not $vpns.Count) { Write-Host 'No VPN connections found on this workstation.' -ForegroundColor Yellow; return }\nWrite-Host 'Visible VPN connections:'\nfor ($i = 0; $i -lt $vpns.Count; $i++) {\n  $state = if ($vpns[$i].ConnectionStatus) { $vpns[$i].ConnectionStatus } else { 'Unknown' }\n  Write-Host (\"  [{0}] {1} ({2})\" -f ($i + 1), $vpns[$i].Name, $state)\n}\nWrite-Host ''\n$choice = Read-Host 'Enter VPN number to start'\nif (-not $choice) { Write-Host 'Cancelled.' -ForegroundColor Yellow; return }\n$idx = [int]$choice - 1\nif ($idx -lt 0 -or $idx -ge $vpns.Count) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; return }\n$vpnName = $vpns[$idx].Name\ntry {\n  $current = $vpns[$idx].ConnectionStatus\n  if ($current -eq 'Connected') {\n    Write-Host \"[OK] VPN already connected: $vpnName\" -ForegroundColor Green\n    return\n  }\n  rasdial \"$vpnName\"\n  Write-Host \"[OK] VPN start command sent: $vpnName\" -ForegroundColor Green\n} catch {\n  Write-Host \"[FAIL] VPN start failed: $($_.Exception.Message)\" -ForegroundColor Red\n}"
     ]
   },
+  "MspDomainGpUpdate": {
+    "Content": "Force Group Policy Update",
+    "Description": "Runs gpupdate /force and shows applied GPO results.",
+    "category": "Domain",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "Write-Host 'Running gpupdate /force...'\ngpupdate /force\nWrite-Host ''\nWrite-Host 'Applied Group Policy results:'\ntry {\n  gpresult /r\n} catch {\n  Write-Host \"gpresult failed: $($_.Exception.Message)\" -ForegroundColor Red\n}"
+    ]
+  },
   "MspDomainJoin": {
     "Content": "Join Workstation to Domain",
     "Description": "Prompts for domain FQDN and admin credentials, verifies connectivity, then joins the domain.",
