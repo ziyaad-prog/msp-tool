@@ -68,8 +68,7 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $logDir = Join-Path $ScriptRoot 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 if (-not $LogFile) {
-    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $LogFile = Join-Path $logDir "msp-$env:COMPUTERNAME-$stamp.log"
+    $LogFile = Join-Path $logDir "msp-$env:COMPUTERNAME.log"
 }
 
 function Write-MspLog {

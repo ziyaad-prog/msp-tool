@@ -37,11 +37,11 @@
   },
   "MspMaintTempCleanup": {
     "Content": "Clear Temp Files",
-    "Description": "Removes user and system temp files older than 7 days.",
+    "Description": "Removes user and system temp files older than 7 days, plus Delivery Optimization cache.",
     "category": "Maintenance",
     "RequiresAdmin": true,
     "InvokeScript": [
-      "$paths = @($env:TEMP, \"$env:WINDIR\\Temp\", \"$env:WINDIR\\Prefetch\")\n$cutoff = (Get-Date).AddDays(-7)\n$total = 0\nforeach ($p in $paths) {\n  if (-not (Test-Path $p)) { continue }\n  Get-ChildItem $p -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer -and $_.LastWriteTime -lt $cutoff } | ForEach-Object {\n    try { $total += $_.Length; Remove-Item $_.FullName -Force -ErrorAction Stop } catch {}\n  }\n}\nWrite-Host \"Cleaned $([math]::Round($total/1MB,2)) MB of temp files\""
+      "$tempfolders = @(\"C:\\Windows\\Temp\\*\", \"C:\\Windows\\Prefetch\\*\", \"C:\\Documents and Settings\\*\\Local Settings\\temp\\*\", \"C:\\Users\\*\\Appdata\\Local\\Temp\\*\")\n$doPath = Join-Path $env:ProgramData 'Microsoft\\Windows\\DeliveryOptimization\\Cache\\*'\n$targets = @($tempfolders + $doPath)\nWrite-Host 'Cleaning paths:'\nWrite-Host ''\nforeach ($target in $targets) {\n  Write-Host \"PATH: $target\" -ForegroundColor Cyan\n  $files = Get-ChildItem $target -Force -Recurse -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }\n  $removedBytes = 0\n  $removedCount = 0\n  foreach ($file in $files) {\n    Write-Host \"  FILE: $($file.FullName)\"\n    try {\n      $removedBytes += $file.Length\n      $removedCount++\n      Remove-Item $file.FullName -Force -Recurse -ErrorAction Stop\n    } catch {\n      Write-Host \"  FAILED TO REMOVE: $($file.FullName) - $($_.Exception.Message)\" -ForegroundColor Red\n    }\n  }\n  Write-Host \"  Removed: $removedCount file(s), $([math]::Round($removedBytes/1MB,2)) MB\" -ForegroundColor Green\n  Write-Host ''\n}"
     ]
   },
   "MspMaintDiskCleanup": {
@@ -104,16 +104,16 @@
     "category": "Security",
     "RequiresAdmin": true,
     "InvokeScript": [
-      "Get-BitLockerVolume | Select-Object MountPoint, VolumeStatus, EncryptionPercentage, ProtectionStatus | Format-Table -AutoSize | Out-String | Write-Host"
+      "Get-BitLockerVolume | Select-Object MountPoint, VolumeStatus, EncryptionPercentage, ProtectionStatus | Format-Table -AutoSize | Out-String | Write-Host\n$kp = (Get-BitLockerVolume -MountPoint 'C').KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }\nif ($kp) {\n  Write-Host ''\n  Write-Host 'Recovery Password Protector(s) for C:'\n  $kp | Select-Object KeyProtectorId, KeyProtectorType, RecoveryPassword | Format-List | Out-String | Write-Host\n} else {\n  Write-Host ''\n  Write-Host 'No RecoveryPassword protector found on C:'\n}"
     ]
   },
   "MspSecLocalAdmins": {
     "Content": "Audit Local Administrators",
-    "Description": "Lists members of the local Administrators group.",
+    "Description": "Lists local Administrators group members and can reset a selected local account password.",
     "category": "Security",
-    "RequiresAdmin": false,
+    "RequiresAdmin": true,
     "InvokeScript": [
-      "$admins = Get-LocalGroupMember -Group 'Administrators' -ErrorAction SilentlyContinue\nif ($admins) {\n  $admins | Select-Object Name, ObjectClass, PrincipalSource | Format-Table -AutoSize | Out-String | Write-Host\n} else {\n  net localgroup Administrators\n}"
+      "$admins = Get-LocalGroupMember -Group 'Administrators' -ErrorAction SilentlyContinue\nif (-not $admins) {\n  net localgroup Administrators\n  return\n}\n$admins = @($admins)\n$localAdmins = @($admins | Where-Object { $_.ObjectClass -eq 'User' -and $_.PrincipalSource -eq 'Local' })\n$admins | Select-Object Name, ObjectClass, PrincipalSource | Format-Table -AutoSize | Out-String | Write-Host\nWrite-Host ''\n$answer = Read-Host 'Do you want to reset the password for one of these local administrator accounts? (y/N)'\nif ($answer -notmatch '^[Yy]') { return }\nif (-not $localAdmins) { Write-Host 'No local user accounts were found in the Administrators group.' -ForegroundColor Yellow; return }\nWrite-Host ''\nfor ($i = 0; $i -lt $localAdmins.Count; $i++) {\n  Write-Host (\"  [{0}] {1}\" -f ($i + 1), $localAdmins[$i].Name)\n}\nWrite-Host ''\n$choice = Read-Host 'Select the account number to reset'\nif (-not $choice) { Write-Host 'Cancelled.' -ForegroundColor Yellow; return }\n$index = [int]$choice - 1\nif ($index -lt 0 -or $index -ge $localAdmins.Count) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; return }\n$userName = $localAdmins[$index].Name\n$secure = Read-Host (\"Enter new password for {0}\" -f $userName) -AsSecureString\nif (-not $secure) { Write-Host 'No password entered. Cancelled.' -ForegroundColor Yellow; return }\ntry {\n  $plain = [System.Net.NetworkCredential]::new('', $secure).Password\n  $newSecure = ConvertTo-SecureString $plain -AsPlainText -Force\n  Set-LocalUser -Name $userName -Password $newSecure -ErrorAction Stop\n  Write-Host (\"Password updated for {0}\" -f $userName) -ForegroundColor Green\n} catch {\n  Write-Host (\"Failed to update password for {0}: {1}\" -f $userName, $_.Exception.Message) -ForegroundColor Red\n}"
     ]
   },
   "MspRepairSFC": {
@@ -203,7 +203,7 @@
     "category": "Domain",
     "RequiresAdmin": false,
     "InvokeScript": [
-      "$cs = Get-CimInstance Win32_ComputerSystem\nWrite-Host \"Computer Name : $env:COMPUTERNAME\"\nif ($cs.PartOfDomain) {\n  Write-Host \"Domain Joined : YES\" -ForegroundColor Green\n  Write-Host \"Domain        : $($cs.Domain)\"\n  try {\n    if (Test-ComputerSecureChannel) { Write-Host 'Secure Channel: HEALTHY' -ForegroundColor Green }\n    else { Write-Host 'Secure Channel: BROKEN - run repair tool or rejoin' -ForegroundColor Red }\n    $detail = Test-ComputerSecureChannel -Detailed\n    Write-Host \"DC Contacted  : $($detail.Server)\"\n  } catch { Write-Host \"Secure Channel: ERROR - $($_.Exception.Message)\" -ForegroundColor Red }\n} else {\n  Write-Host \"Domain Joined : NO\" -ForegroundColor Yellow\n  Write-Host \"Workgroup     : $($cs.Domain)\" -ForegroundColor Yellow\n}"
+      "$cs = Get-CimInstance Win32_ComputerSystem\nWrite-Host \"Computer Name : $env:COMPUTERNAME\"\nif ($cs.PartOfDomain) {\n  Write-Host \"Domain Joined : YES\" -ForegroundColor Green\n  Write-Host \"Domain        : $($cs.Domain)\"\n  try {\n    if (Test-ComputerSecureChannel) { Write-Host 'Secure Channel: HEALTHY' -ForegroundColor Green }\n    else { Write-Host 'Secure Channel: BROKEN - run repair tool or rejoin' -ForegroundColor Red }\n  } catch { Write-Host \"Secure Channel: ERROR - $($_.Exception.Message)\" -ForegroundColor Red }\n} else {\n  Write-Host \"Domain Joined : NO\" -ForegroundColor Yellow\n  Write-Host \"Workgroup     : $($cs.Domain)\" -ForegroundColor Yellow\n}"
     ]
   },
   "MspDomainConnectivity": {
@@ -215,6 +215,15 @@
       "$domain = Read-Host 'Enter target domain FQDN (e.g. corp.contoso.com)'\nif ($domain) {\n  try {\n    $ips = [System.Net.Dns]::GetHostAddresses($domain) | Where-Object AddressFamily -eq 'InterNetwork'\n    if (-not $ips) { throw 'no A records' }\n    Write-Host \"[OK] DNS      : $domain -> $($ips[0].IPAddressToString)\" -ForegroundColor Green\n  } catch { Write-Host \"[FAIL] DNS    : cannot resolve '$domain'. Check DNS config.\" -ForegroundColor Red; return }\n  try {\n    $ctx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext([System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain)\n    $ad = [System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($ctx)\n    $dc = $ad.DomainControllers | Select-Object -First 1\n    Write-Host \"[OK] DC found : $($dc.Name)\" -ForegroundColor Green\n    $tcp = New-Object System.Net.Sockets.TcpClient\n    if (-not $tcp.ConnectAsync($dc.IPAddress, 389).Wait(5000)) { throw \"LDAP timeout on $($dc.IPAddress)\" }\n    $tcp.Close()\n    Write-Host \"[OK] LDAP     : $($dc.IPAddress):389 reachable\" -ForegroundColor Green\n    Write-Host '' -ForegroundColor Green\n    Write-Host \"SUCCESS: Workstation can reach domain '$domain'.\" -ForegroundColor Green\n  } catch { Write-Host \"[FAIL] AD     : $($_.Exception.Message)\" -ForegroundColor Red }\n}"
     ]
   },
+  "MspDomainCredentialTest": {
+    "Content": "Test Domain Join Credential",
+    "Description": "Verifies a supplied credential can authenticate to the target domain before joining a workstation.",
+    "category": "Domain",
+    "RequiresAdmin": false,
+    "InvokeScript": [
+      "$domain = Read-Host 'Enter target domain FQDN (e.g. corp.contoso.com)'\nif (-not $domain) { Write-Host 'No domain entered - aborted.' -ForegroundColor Yellow; return }\n$cred = Get-Credential -Message \"Enter the account you want to test against $domain\"\nif (-not $cred) { Write-Host 'Credentials required - aborted.' -ForegroundColor Yellow; return }\ntry {\n  $ctx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext([System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain, $cred.UserName, $cred.GetNetworkCredential().Password)\n  $ad = [System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($ctx)\n  Write-Host \"SUCCESS: Credential validated for domain '$($ad.Name)'.\" -ForegroundColor Green\n} catch {\n  Write-Host \"FAILED: Credential did not validate for domain '$domain'. $($_.Exception.Message)\" -ForegroundColor Red\n}"
+    ]
+  },
   "MspDomainJoin": {
     "Content": "Join Workstation to Domain",
     "Description": "Prompts for domain FQDN and admin credentials, verifies connectivity, then joins the domain.",
@@ -222,6 +231,15 @@
     "RequiresAdmin": true,
     "InvokeScript": [
       "$cs = Get-CimInstance Win32_ComputerSystem\nif ($cs.PartOfDomain) { Write-Host \"Already joined to '$($cs.Domain)'. Nothing to do.\" -ForegroundColor Yellow; return }\n$domain = Read-Host 'Enter target domain FQDN (e.g. corp.contoso.com)'\nif (-not $domain) { Write-Host 'No domain entered - aborted.' -ForegroundColor Yellow; return }\ntry {\n  $ctx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext([System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain)\n  [void][System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($ctx)\n  Write-Host \"[OK] Domain reachable: $domain\" -ForegroundColor Green\n} catch { Write-Host \"Cannot reach domain '$domain': $($_.Exception.Message)\" -ForegroundColor Red; return }\n$cred = Get-Credential -Message \"Account with rights to join $domain\"\nif (-not $cred) { Write-Host 'Credentials required - aborted.' -ForegroundColor Yellow; return }\n$ou = Read-Host 'Target OU path (optional, press Enter to skip, e.g. OU=Workstations,DC=corp,DC=contoso,DC=com)'\n$params = @{ DomainName = $domain; Credential = $cred; Force = $true; ErrorAction = 'Stop' }\nif ($ou) { $params['OU'] = $ou }\ntry {\n  Add-Computer @params\n  Write-Host \"SUCCESS: Joined domain '$domain'. A restart is required to finish.\" -ForegroundColor Green\n  $r = Read-Host 'Restart now? (Y/n)'\n  if ($r -notmatch '^n') { Restart-Computer -Force } else { Write-Host 'Reboot later to complete the join.' -ForegroundColor Yellow }\n} catch { Write-Host \"FAILED to join domain: $($_.Exception.Message)\" -ForegroundColor Red }"
+    ]
+  },
+  "MspDomainUnjoin": {
+    "Content": "Remove Workstation from Domain",
+    "Description": "Unjoins the workstation from the domain and joins a workgroup.",
+    "category": "Domain",
+    "RequiresAdmin": true,
+    "InvokeScript": [
+      "$cs = Get-CimInstance Win32_ComputerSystem\nif (-not $cs.PartOfDomain) { Write-Host 'Workstation is not domain joined.' -ForegroundColor Yellow; return }\nWrite-Host \"Current domain: $($cs.Domain)\"\n$confirm = Read-Host 'Type YES to remove this workstation from the domain'\nif ($confirm -ne 'YES') { Write-Host 'Cancelled.' -ForegroundColor Yellow; return }\n$workgroup = Read-Host 'Enter workgroup name to join (default: WORKGROUP)'\nif (-not $workgroup) { $workgroup = 'WORKGROUP' }\n$cred = Get-Credential -Message 'Enter domain account with rights to remove this computer from the domain'\nif (-not $cred) { Write-Host 'Credentials required - aborted.' -ForegroundColor Yellow; return }\n$stageOnly = Read-Host 'Stage the unjoin without restarting now? (Y/n)'\ntry {\n  Remove-Computer -UnjoinDomainCredential $cred -WorkgroupName $workgroup -Force -ErrorAction Stop\n  Write-Host \"SUCCESS: Removed from domain and joined workgroup '$workgroup'. Restart is required.\" -ForegroundColor Green\n  if ($stageOnly -match '^[Yy]') {\n    Write-Host 'Unjoin staged. Reboot later to complete the change.' -ForegroundColor Yellow\n    return\n  }\n  $r = Read-Host 'Restart now? (Y/n)'\n  if ($r -notmatch '^n') { Restart-Computer -Force } else { Write-Host 'Reboot later to complete the unjoin.' -ForegroundColor Yellow }\n} catch {\n  Write-Host \"FAILED to remove workstation from domain: $($_.Exception.Message)\" -ForegroundColor Red\n}"
     ]
   },
   "MspDomainSecureRepair": {
