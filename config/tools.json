@@ -201,6 +201,7 @@
     "Content": "Domain Join Status",
     "Description": "Shows if the workstation is domain joined, the domain name, and secure channel health.",
     "category": "Domain",
+    "Order": 1,
     "RequiresAdmin": false,
     "InvokeScript": [
       "$cs = Get-CimInstance Win32_ComputerSystem\nWrite-Host \"Computer Name : $env:COMPUTERNAME\"\nif ($cs.PartOfDomain) {\n  Write-Host \"Domain Joined : YES\" -ForegroundColor Green\n  Write-Host \"Domain        : $($cs.Domain)\"\n  try {\n    if (Test-ComputerSecureChannel) { Write-Host 'Secure Channel: HEALTHY' -ForegroundColor Green }\n    else { Write-Host 'Secure Channel: BROKEN - run repair tool or rejoin' -ForegroundColor Red }\n  } catch { Write-Host \"Secure Channel: ERROR - $($_.Exception.Message)\" -ForegroundColor Red }\n} else {\n  Write-Host \"Domain Joined : NO\" -ForegroundColor Yellow\n  Write-Host \"Workgroup     : $($cs.Domain)\" -ForegroundColor Yellow\n}"
@@ -228,6 +229,7 @@
     "Content": "Test Domain Join Credential",
     "Description": "Verifies a supplied credential can authenticate to the target domain before joining a workstation.",
     "category": "Domain",
+    "Order": 5,
     "RequiresAdmin": false,
     "InvokeScript": [
       "$domain = Read-Host 'Enter target domain FQDN (e.g. corp.contoso.com)'\nif (-not $domain) { Write-Host 'No domain entered - aborted.' -ForegroundColor Yellow; return }\n$cred = Get-Credential -Message \"Enter the account you want to test against $domain\"\nif (-not $cred) { Write-Host 'Credentials required - aborted.' -ForegroundColor Yellow; return }\ntry {\n  $ctx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext([System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain, $cred.UserName, $cred.GetNetworkCredential().Password)\n  $ad = [System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($ctx)\n  Write-Host \"SUCCESS: Credential validated for domain '$($ad.Name)'.\" -ForegroundColor Green\n} catch {\n  Write-Host \"FAILED: Credential did not validate for domain '$domain'. $($_.Exception.Message)\" -ForegroundColor Red\n}"
@@ -237,6 +239,7 @@
     "Content": "VPN Checker",
     "Description": "Lists visible VPN connections, shows connection status, and prompts which one to start.",
     "category": "Domain",
+    "Order": 3,
     "RequiresAdmin": false,
     "InvokeScript": [
       "$vpns = @()\ntry { $vpns += Get-VpnConnection -AllUserConnection -ErrorAction SilentlyContinue } catch { }\ntry { $vpns += Get-VpnConnection -ErrorAction SilentlyContinue } catch { }\n$vpns = @($vpns | Sort-Object Name -Unique)\nif (-not $vpns.Count) { Write-Host 'No VPN connections found on this workstation.' -ForegroundColor Yellow; return }\nWrite-Host 'Visible VPN connections:'\nfor ($i = 0; $i -lt $vpns.Count; $i++) {\n  $state = if ($vpns[$i].ConnectionStatus) { $vpns[$i].ConnectionStatus } else { 'Unknown' }\n  Write-Host (\"  [{0}] {1} ({2})\" -f ($i + 1), $vpns[$i].Name, $state)\n}\nWrite-Host ''\n$choice = Read-Host 'Enter VPN number to start'\nif (-not $choice) { Write-Host 'Cancelled.' -ForegroundColor Yellow; return }\n$idx = [int]$choice - 1\nif ($idx -lt 0 -or $idx -ge $vpns.Count) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; return }\n$vpnName = $vpns[$idx].Name\ntry {\n  $current = $vpns[$idx].ConnectionStatus\n  if ($current -eq 'Connected') {\n    Write-Host \"[OK] VPN already connected: $vpnName\" -ForegroundColor Green\n    return\n  }\n  rasdial \"$vpnName\"\n  Write-Host \"[OK] VPN start command sent: $vpnName\" -ForegroundColor Green\n} catch {\n  Write-Host \"[FAIL] VPN start failed: $($_.Exception.Message)\" -ForegroundColor Red\n}"
@@ -246,6 +249,7 @@
     "Content": "Force Group Policy Update",
     "Description": "Runs gpupdate /force and shows applied GPO results.",
     "category": "Domain",
+    "Order": 9,
     "RequiresAdmin": true,
     "InvokeScript": [
       "Write-Host 'Running gpupdate /force...'\ngpupdate /force\nWrite-Host ''\nWrite-Host 'Applied Group Policy results:'\ntry {\n  gpresult /r\n} catch {\n  Write-Host \"gpresult failed: $($_.Exception.Message)\" -ForegroundColor Red\n}"
@@ -255,6 +259,7 @@
     "Content": "Join Workstation to Domain",
     "Description": "Prompts for domain FQDN and admin credentials, verifies connectivity, then joins the domain.",
     "category": "Domain",
+    "Order": 8,
     "RequiresAdmin": true,
     "InvokeScript": [
       "$cs = Get-CimInstance Win32_ComputerSystem\nif ($cs.PartOfDomain) { Write-Host \"Already joined to '$($cs.Domain)'. Nothing to do.\" -ForegroundColor Yellow; return }\n$domain = Read-Host 'Enter target domain FQDN (e.g. corp.contoso.com)'\nif (-not $domain) { Write-Host 'No domain entered - aborted.' -ForegroundColor Yellow; return }\ntry {\n  $ctx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext([System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain)\n  [void][System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($ctx)\n  Write-Host \"[OK] Domain reachable: $domain\" -ForegroundColor Green\n} catch { Write-Host \"Cannot reach domain '$domain': $($_.Exception.Message)\" -ForegroundColor Red; return }\n$cred = Get-Credential -Message \"Account with rights to join $domain\"\nif (-not $cred) { Write-Host 'Credentials required - aborted.' -ForegroundColor Yellow; return }\n$ou = Read-Host 'Target OU path (optional, press Enter to skip, e.g. OU=Workstations,DC=corp,DC=contoso,DC=com)'\n$params = @{ DomainName = $domain; Credential = $cred; Force = $true; ErrorAction = 'Stop' }\nif ($ou) { $params['OU'] = $ou }\ntry {\n  Add-Computer @params\n  Write-Host \"SUCCESS: Joined domain '$domain'. A restart is required to finish.\" -ForegroundColor Green\n  $r = Read-Host 'Restart now? (Y/n)'\n  if ($r -notmatch '^n') { Restart-Computer -Force } else { Write-Host 'Reboot later to complete the join.' -ForegroundColor Yellow }\n} catch { Write-Host \"FAILED to join domain: $($_.Exception.Message)\" -ForegroundColor Red }"
@@ -264,6 +269,7 @@
     "Content": "Remove Workstation from Domain",
     "Description": "Unjoins the workstation from the domain and joins a workgroup.",
     "category": "Domain",
+    "Order": 7,
     "RequiresAdmin": true,
     "InvokeScript": [
       "$cs = Get-CimInstance Win32_ComputerSystem\nif (-not $cs.PartOfDomain) { Write-Host 'Workstation is not domain joined.' -ForegroundColor Yellow; return }\nWrite-Host \"Current domain: $($cs.Domain)\"\n$confirm = Read-Host 'Type YES to remove this workstation from the domain'\nif ($confirm -ne 'YES') { Write-Host 'Cancelled.' -ForegroundColor Yellow; return }\n$workgroup = Read-Host 'Enter workgroup name to join (default: WORKGROUP)'\nif (-not $workgroup) { $workgroup = 'WORKGROUP' }\n$cred = Get-Credential -Message 'Enter domain account with rights to remove this computer from the domain'\nif (-not $cred) { Write-Host 'Credentials required - aborted.' -ForegroundColor Yellow; return }\n$stageOnly = Read-Host 'Stage the unjoin without restarting now? (Y/n)'\ntry {\n  Remove-Computer -UnjoinDomainCredential $cred -WorkgroupName $workgroup -Force -ErrorAction Stop\n  Write-Host \"SUCCESS: Removed from domain and joined workgroup '$workgroup'. Restart is required.\" -ForegroundColor Green\n  if ($stageOnly -match '^[Yy]') {\n    Write-Host 'Unjoin staged. Reboot later to complete the change.' -ForegroundColor Yellow\n    return\n  }\n  $r = Read-Host 'Restart now? (Y/n)'\n  if ($r -notmatch '^n') { Restart-Computer -Force } else { Write-Host 'Reboot later to complete the unjoin.' -ForegroundColor Yellow }\n} catch {\n  Write-Host \"FAILED to remove workstation from domain: $($_.Exception.Message)\" -ForegroundColor Red\n}"
@@ -273,6 +279,7 @@
     "Content": "Repair Domain Secure Channel",
     "Description": "Tests and repairs the machine account trust with the domain (fixes 'trust relationship failed').",
     "category": "Domain",
+    "Order": 6,
     "RequiresAdmin": true,
     "InvokeScript": [
       "$cs = Get-CimInstance Win32_ComputerSystem\nif (-not $cs.PartOfDomain) { Write-Host 'Workstation is not domain joined.' -ForegroundColor Yellow; return }\nWrite-Host \"Testing secure channel for domain '$($cs.Domain)'...\"\nif (Test-ComputerSecureChannel) {\n  Write-Host 'Secure channel is HEALTHY - no repair needed.' -ForegroundColor Green\n} else {\n  Write-Host 'Secure channel is BROKEN - repairing...' -ForegroundColor Yellow\n  if (Test-ComputerSecureChannel -Repair) {\n    Write-Host 'Secure channel repaired successfully.' -ForegroundColor Green\n    $r = Read-Host 'Restart now? (Y/n)'\n    if ($r -notmatch '^n') { Restart-Computer -Force }\n  } else {\n    Write-Host 'Repair failed - leave and rejoin the domain instead.' -ForegroundColor Red\n  }\n}"

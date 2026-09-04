@@ -220,7 +220,9 @@
             $header.Margin = '0,12,0,6'
             [void]$Panel.Children.Add($header)
 
-            foreach ($entry in ($group.Group | Sort-Object { $_.Value.Content })) {
+            foreach ($entry in ($group.Group | Sort-Object {
+                if ($_.Value.PSObject.Properties.Name -contains 'Order') { $_.Value.Order } else { 9999 }
+            }, { $_.Value.Content })) {
                 $id = $entry.Key
                 $tool = $entry.Value
 
