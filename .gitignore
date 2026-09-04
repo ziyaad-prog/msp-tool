@@ -1,5 +1,7 @@
 # Build artifacts
 *.log
+*.zip
+logs/
 MSP-Reports/
 
 # OS
