@@ -7,6 +7,7 @@ Inspired by [Chris Titus Tech's WinUtil](https://github.com/christitustech/winut
 ## Features
 
 - **Checkbox GUI** — Browse tools by category (Diagnostics, Maintenance, Security, Repair, Setup)
+- **Console menu** — Same tool engine, no WPF: a text menu for sessions with no desktop (Server Core, plain RDP/SSH)
 - **Presets** — One-click bundles for health checks, maintenance, security audits, and more
 - **Search** — Filter tools by name or description
 - **CLI mode** — Automate with `-Preset` or `-Tools` for RMM/scripted deployments
@@ -20,6 +21,23 @@ Open **PowerShell as Administrator** (recommended for full tool access), then:
 cd C:\Users\LENET\Projects\msp-tool
 .\msptool.ps1
 ```
+
+### Console edition
+
+`msptool.ps1` opens a WPF GUI, which needs a desktop session. `msptool-console.ps1` is a
+separate, fully text-based entry point that drives the exact same `config/tools.json` /
+`config/presets.json` engine through a numbered menu instead — useful over a plain
+SSH/PS-remoting session or on Server Core:
+
+```powershell
+.\msptool-console.ps1
+```
+
+In the menu: type a tool's number (or a comma-separated list, e.g. `1,3,5`) to toggle it,
+`c` to switch category, `f` to set a search filter, `p` to apply a preset, `m` to run a
+procedure, `v` to view your current selection, `r` to run it, and `q` to quit. It accepts
+the same `-Preset`, `-Tools`, `-Procedure`, `-ListTools`, `-ListPresets`, `-ListProcedures`
+flags as `msptool.ps1` for headless/RMM use.
 
 ## CLI Usage
 
@@ -79,13 +97,15 @@ Add the tool ID to a preset in `config/presets.json` to include it in a bundle.
 
 ```
 msp-tool/
-├── msptool.ps1              # Entry point
+├── msptool.ps1               # Entry point (WPF GUI)
+├── msptool-console.ps1       # Entry point (console menu, no WPF)
 ├── config/
-│   ├── tools.json           # Tool definitions
-│   └── presets.json         # Preset bundles
+│   ├── tools.json            # Tool definitions
+│   └── presets.json          # Preset bundles
 └── functions/
-    ├── Invoke-MspTool.ps1   # Tool execution engine
-    └── Show-MspGui.ps1      # WPF GUI
+    ├── Invoke-MspTool.ps1    # Tool execution engine
+    ├── Show-MspGui.ps1       # WPF GUI
+    └── Show-MspConsoleMenu.ps1 # Console menu
 ```
 
 ## Requirements

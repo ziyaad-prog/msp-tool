@@ -29,6 +29,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Capture the script's own bound parameters now - reading them from inside a
+# parameterless function (like Invoke-MspElevation below) is always empty, since
+# it reflects only what was bound to that function's own invocation, not the script's.
+$ScriptBoundParameters = $PSBoundParameters
+
 if (-not $Domain) {
     $Domain = Get-MspDefaultDomainSuggestion
 }
@@ -242,7 +247,7 @@ function Invoke-MspElevation {
         Write-Host "Not elevated - relaunching with Run as Administrator..." -ForegroundColor Yellow
 
         $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-File', "`"$PSCommandPath`"")
-        foreach ($bound in $MyInvocation.BoundParameters.GetEnumerator()) {
+        foreach ($bound in $ScriptBoundParameters.GetEnumerator()) {
             if ($bound.Key -eq 'Credential') { continue }
             if ($bound.Value -is [switch] -and $bound.Value.IsPresent) {
                 $argList += "-$($bound.Key)"

@@ -1,17 +1,20 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    MSP Tool - Select and run Windows maintenance, diagnostic, and setup tools.
+    MSP Tool (Console Edition) - Select and run Windows maintenance, diagnostic, and setup tools.
 
 .DESCRIPTION
-    WinUtil-style GUI for MSP technicians. Tools are defined in config/tools.json.
-    Presets bundle common workflows in config/presets.json.
+    Pure PowerShell console version of msptool.ps1: same tool engine and config
+    (config/tools.json, config/presets.json), but the interactive experience is a
+    text menu instead of the WPF GUI. Use this when there's no desktop session
+    available (RDP without a GUI, Server Core, an SSH/PS-remoting session, etc.)
+    or when you'd rather avoid loading the WPF assemblies at all.
 
 .PARAMETER Preset
-    Run a named preset without opening the GUI.
+    Run a named preset without opening the menu.
 
 .PARAMETER Tools
-    Run specific tool IDs without opening the GUI.
+    Run specific tool IDs without opening the menu.
 
 .PARAMETER ListTools
     List all available tool IDs and exit.
@@ -20,15 +23,15 @@
     List all available presets and exit.
 
 .EXAMPLE
-    .\msptool.ps1
+    .\msptool-console.ps1
 
 .EXAMPLE
-    .\msptool.ps1 -Preset QuickHealthCheck
+    .\msptool-console.ps1 -Preset QuickHealthCheck
 
 .EXAMPLE
-    .\msptool.ps1 -Tools MspDiagSystemInfo, MspDiagNetwork
+    .\msptool-console.ps1 -Tools MspDiagSystemInfo, MspDiagNetwork
 #>
-[CmdletBinding(DefaultParameterSetName = 'Gui')]
+[CmdletBinding(DefaultParameterSetName = 'Menu')]
 param(
     [Parameter(ParameterSetName = 'Preset')]
     [string]$Preset,
@@ -73,7 +76,7 @@ $ScriptBoundParameters = $PSBoundParameters
 $logDir = Join-Path $ScriptRoot 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 if (-not $LogFile) {
-    $LogFile = Join-Path $logDir "msp-$env:COMPUTERNAME.log"
+    $LogFile = Join-Path $logDir "msp-console-$env:COMPUTERNAME.log"
 }
 
 function Write-MspLog {
@@ -83,7 +86,7 @@ function Write-MspLog {
 }
 
 function Write-MspHeader {
-    Write-MspLog "================ MSP TOOL SESSION ================"
+    Write-MspLog "================ MSP TOOL SESSION (console) ================"
     Write-MspLog "Computer : $env:COMPUTERNAME"
     Write-MspLog "User     : $env:USERDOMAIN\$env:USERNAME"
     Write-MspLog "Started  : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
@@ -94,7 +97,7 @@ function Write-MspHeader {
         Write-MspLog ("  -{0} = {1}" -f $bound.Key, ($bound.Value -join ', '))
     }
     if (-not $ScriptBoundParameters.Count -or $ScriptBoundParameters.Keys.Count -eq 0) {
-        Write-MspLog "  (no parameters - interactive GUI session)"
+        Write-MspLog "  (no parameters - interactive console session)"
     }
     Write-MspLog "---------------------------------------------------"
 }
@@ -104,7 +107,6 @@ Write-MspHeader
 if (-not $NoTranscript) {
     try { Start-Transcript -Path "$($LogFile).transcript.txt" -Append | Out-Null } catch { }
 }
-
 
 # Auto-elevate: relaunch as Administrator if not already elevated.
 # Skip for read-only list actions - they don't need admin and shouldn't pop a UAC prompt
@@ -152,6 +154,14 @@ function Get-MspConfig {
 $toolConfig = Get-MspConfig -Name 'tools'
 $presetConfig = Get-MspConfig -Name 'presets'
 
+function Exit-MspSession {
+    param([int]$Code = 0)
+    if (-not $NoTranscript) { try { Stop-Transcript | Out-Null } catch { } }
+    Write-MspLog "Session ended: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    Write-MspLog "Log saved: $LogFile"
+    exit $Code
+}
+
 if ($ListTools) {
     $toolConfig.GetEnumerator() |
         Sort-Object { $_.Value.category }, { $_.Value.Content } |
@@ -189,14 +199,6 @@ if ($ListProcedures) {
         }
     } | Format-Table -AutoSize -Wrap
     Exit-MspSession
-}
-
-function Exit-MspSession {
-    param([int]$Code = 0)
-    if (-not $NoTranscript) { try { Stop-Transcript | Out-Null } catch { } }
-    Write-MspLog "Session ended: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-    Write-MspLog "Log saved: $LogFile"
-    exit $Code
 }
 
 function Write-MspConsoleLog {
@@ -237,9 +239,9 @@ if ($Tools) {
     Exit-MspSession
 }
 
-. (Join-Path $ScriptRoot 'functions\Show-MspGui.ps1')
+. (Join-Path $ScriptRoot 'functions\Show-MspConsoleMenu.ps1')
 
-Show-MspGui -ToolConfig $toolConfig -PresetConfig $presetConfig -ProcedureNames @(Get-MspProcedureNames) -OnRun {
+Show-MspConsoleMenu -ToolConfig $toolConfig -PresetConfig $presetConfig -ProcedureNames @(Get-MspProcedureNames) -OnRun {
     param([string[]]$SelectedIds, [scriptblock]$OnLog)
     Invoke-MspToolBatch -ToolIds $SelectedIds -ToolConfig $toolConfig -OnLog $OnLog | Out-Null
 } -OnProcedure {
@@ -247,3 +249,5 @@ Show-MspGui -ToolConfig $toolConfig -PresetConfig $presetConfig -ProcedureNames 
     $procConfig = Resolve-MspProcedure -Name $Name
     Invoke-MspProcedure -Procedure $procConfig -ToolConfig $toolConfig -AutoOnly:$AutoOnly -OnLog $OnLog
 }
+
+Exit-MspSession

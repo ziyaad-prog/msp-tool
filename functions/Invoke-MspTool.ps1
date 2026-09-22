@@ -56,8 +56,9 @@ function Invoke-MspToolBatch {
 
     $results = @()
     foreach ($id in $ToolIds) {
-        & $OnLog "[WAIT] Starting next tool only after the previous one completes"
+& $OnLog "[WAIT] Starting next tool only after the previous one completes"
         $results += Invoke-MspTool -ToolId $id -ToolConfig $ToolConfig -OnLog $OnLog
+        & $OnLog ''
     }
 
     $completed = @($results | Where-Object Success).Count

@@ -197,6 +197,20 @@
 
     $checkboxMap = @{}
     $allCheckboxes = [System.Collections.Generic.List[object]]::new()
+    $syncLock = $false
+
+    function Sync-Checkbox {
+        param($Sender, [bool]$Value)
+        if ($syncLock) { return }
+        $syncLock = $true
+        try {
+            if (-not $Sender.Tag) { return }
+            foreach ($c in $checkboxMap[$Sender.Tag]) {
+                if ($c.IsChecked -ne $Value) { $c.IsChecked = $Value }
+            }
+        }
+        finally { $syncLock = $false }
+    }
 
     function Add-ToolCheckboxes {
         param([System.Windows.Controls.Panel]$Panel, [string]$FilterCategory)
@@ -236,12 +250,14 @@
                 }
 
                 if (-not $checkboxMap.ContainsKey($id)) {
-                    $checkboxMap[$id] = $cb
-                    [void]$allCheckboxes.Add($cb)
-                } else {
-                    $cb.IsChecked = $checkboxMap[$id].IsChecked
-                    $checkboxMap[$id] = $cb
+                    $checkboxMap[$id] = [System.Collections.Generic.List[object]]::new()
                 }
+                [void]$checkboxMap[$id].Add($cb)
+                if ($checkboxMap[$id].Count -gt 1) { $cb.IsChecked = $checkboxMap[$id][0].IsChecked }
+                [void]$allCheckboxes.Add($cb)
+
+                $cb.Add_Checked({ Sync-Checkbox -Sender $sender -Value $true })
+                $cb.Add_Unchecked({ Sync-Checkbox -Sender $sender -Value $false })
 
                 [void]$Panel.Children.Add($cb)
 
@@ -304,7 +320,7 @@
 
         foreach ($toolId in $preset.Tools) {
             if ($checkboxMap.ContainsKey($toolId)) {
-                $checkboxMap[$toolId].IsChecked = $true
+                foreach ($cb in $checkboxMap[$toolId]) { $cb.IsChecked = $true }
             }
         }
 
@@ -333,7 +349,7 @@
     })
 
     $runBtn.Add_Click({
-        $selected = @($checkboxMap.GetEnumerator() | Where-Object { $_.Value.IsChecked -eq $true } | ForEach-Object { $_.Key })
+        $selected = @($checkboxMap.GetEnumerator() | Where-Object { @($_.Value | Where-Object IsChecked -eq $true).Count -gt 0 } | ForEach-Object { $_.Key })
         if ($selected.Count -eq 0) {
             Write-LogLine 'No tools selected.'
             return
