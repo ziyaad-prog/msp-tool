@@ -8,8 +8,10 @@ function Resolve-MspProcedure {
     }
 
     $json = Get-Content -Path $path -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($json.PSObject.Properties.Count -eq 1) {
-        return $json.PSObject.Properties[0].Value
+    # PSObject.Properties indexes by member name, not position - wrap in @() to index by position
+    $props = @($json.PSObject.Properties)
+    if ($props.Count -eq 1) {
+        return $props[0].Value
     }
     return $json
 }
@@ -26,8 +28,9 @@ function Get-MspProcedureNames {
 
     Get-ChildItem -Path $dir -Filter '*.json' | ForEach-Object {
         $json = Get-Content -Path $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($json.PSObject.Properties.Count -eq 1) {
-            $json.PSObject.Properties[0].Name
+        $props = @($json.PSObject.Properties)
+        if ($props.Count -eq 1) {
+            $props[0].Name
         } else {
             $_.BaseName
         }
@@ -67,6 +70,8 @@ function Invoke-MspProcedure {
     $stepNum = 0
     $automated = 0
     $manual = 0
+    $skipAutomated = $false
+    $skipManual = [bool]$AutoOnly
 
     foreach ($section in @($Procedure.Sections)) {
         & $OnLog ""
@@ -81,6 +86,8 @@ function Invoke-MspProcedure {
 
             if ($step.Type -eq 'tool') {
                 $automated++
+                if ($skipAutomated) { continue }
+
                 & $OnLog ""
                 & $OnLog ">> AUTOMATED: $label"
                 if ($step.Instructions) {
@@ -89,7 +96,11 @@ function Invoke-MspProcedure {
 
                 if ($Interactive) {
                     $prompt = Read-Host "Run this step? [Y/n/s=skip remaining automated]"
-                    if ($prompt -eq 's') { $AutoOnly = $true; continue }
+                    if ($prompt -eq 's') {
+                        $skipAutomated = $true
+                        & $OnLog "   Skipped by user (and all remaining automated steps)."
+                        continue
+                    }
                     if ($prompt -eq 'n') {
                         & $OnLog "   Skipped by user."
                         continue
@@ -100,14 +111,18 @@ function Invoke-MspProcedure {
             }
             else {
                 $manual++
-                if ($AutoOnly) { continue }
+                if ($skipManual) { continue }
 
                 & $OnLog ""
                 & $OnLog ">> MANUAL: $label"
                 & $OnLog "   $($step.Instructions)"
 
                 if ($Interactive) {
-                    Read-Host "Press Enter when this manual step is complete (or type s to skip remaining manual steps)"
+                    $prompt = Read-Host "Press Enter when this manual step is complete (or type s to skip remaining manual steps)"
+                    if ($prompt -eq 's') {
+                        $skipManual = $true
+                        & $OnLog "   Remaining manual steps skipped by user."
+                    }
                 }
             }
         }

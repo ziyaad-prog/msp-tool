@@ -70,6 +70,12 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 # reflects only what was bound to that function's own invocation, not the script's.
 $ScriptBoundParameters = $PSBoundParameters
 
+# Under `powershell -File` (the elevation relaunch, .cmd launchers, RMM), "-Tools A,B"
+# arrives as the single string 'A,B' rather than an array - split it back out.
+if ($Tools) {
+    $Tools = @($Tools | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
 # ---------------------------------------------------------------------------
 # Logging: capture all actions, inputs, and command output to a file
 # ---------------------------------------------------------------------------
@@ -120,7 +126,7 @@ if (-not $isListOnlyRequest -and -not $currentPrincipal.IsInRole([Security.Princ
             $argList += "-$($bound.Key)"
         }
         else {
-            $argList += "-$($bound.Key)"; $argList += "`"$($bound.Value)`""
+            $argList += "-$($bound.Key)"; $argList += "`"$(@($bound.Value) -join ',')`""
         }
     }
     try {

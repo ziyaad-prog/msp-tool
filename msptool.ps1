@@ -67,6 +67,12 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 # reflects only what was bound to that function's own invocation, not the script's.
 $ScriptBoundParameters = $PSBoundParameters
 
+# Under `powershell -File` (the elevation relaunch, .cmd launchers, RMM), "-Tools A,B"
+# arrives as the single string 'A,B' rather than an array - split it back out.
+if ($Tools) {
+    $Tools = @($Tools | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
 # ---------------------------------------------------------------------------
 # Logging: capture all actions, inputs, and command output to a file
 # ---------------------------------------------------------------------------
@@ -118,7 +124,7 @@ if (-not $isListOnlyRequest -and -not $currentPrincipal.IsInRole([Security.Princ
             $argList += "-$($bound.Key)"
         }
         else {
-            $argList += "-$($bound.Key)"; $argList += "`"$($bound.Value)`""
+            $argList += "-$($bound.Key)"; $argList += "`"$(@($bound.Value) -join ',')`""
         }
     }
     try {
@@ -151,6 +157,14 @@ function Get-MspConfig {
 
 $toolConfig = Get-MspConfig -Name 'tools'
 $presetConfig = Get-MspConfig -Name 'presets'
+
+function Exit-MspSession {
+    param([int]$Code = 0)
+    if (-not $NoTranscript) { try { Stop-Transcript | Out-Null } catch { } }
+    Write-MspLog "Session ended: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    Write-MspLog "Log saved: $LogFile"
+    exit $Code
+}
 
 if ($ListTools) {
     $toolConfig.GetEnumerator() |
@@ -189,14 +203,6 @@ if ($ListProcedures) {
         }
     } | Format-Table -AutoSize -Wrap
     Exit-MspSession
-}
-
-function Exit-MspSession {
-    param([int]$Code = 0)
-    if (-not $NoTranscript) { try { Stop-Transcript | Out-Null } catch { } }
-    Write-MspLog "Session ended: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-    Write-MspLog "Log saved: $LogFile"
-    exit $Code
 }
 
 function Write-MspConsoleLog {

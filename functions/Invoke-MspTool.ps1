@@ -12,7 +12,9 @@ function Invoke-MspTool {
 
     $tool = $ToolConfig[$ToolId]
     if (-not $tool) {
-        throw "Unknown tool: $ToolId"
+        # Report rather than throw, so one mistyped ID doesn't abort the rest of a batch/procedure
+        & $OnLog "[ERROR] Unknown tool: $ToolId (use -ListTools to see valid IDs)"
+        return @{ Id = $ToolId; Name = $ToolId; Success = $false; Skipped = $false; Error = "Unknown tool: $ToolId" }
     }
 
     $name = $tool.Content
@@ -26,10 +28,12 @@ function Invoke-MspTool {
     try {
         foreach ($scriptBlock in @($tool.InvokeScript)) {
             $block = [scriptblock]::Create($scriptBlock)
-            $output = & $block 2>&1
-            foreach ($line in @($output)) {
-                if ($null -ne $line -and "$line".Trim()) {
-                    & $OnLog "  $line"
+            # *>&1 (not 2>&1) so Write-Host/verbose/warning output reaches OnLog - the GUI log
+            # and the .log file - too. Piping streams each line as it's produced, so an
+            # interactive tool's menu still appears before its Read-Host prompt.
+            & $block *>&1 | ForEach-Object {
+                if ($null -ne $_ -and "$_".Trim()) {
+                    & $OnLog "  $_"
                 }
             }
         }

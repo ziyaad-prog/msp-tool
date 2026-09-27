@@ -59,7 +59,7 @@
     "category": "Maintenance",
     "RequiresAdmin": true,
     "InvokeScript": [
-      "Get-Volume | Where-Object DriveLetter -and DriveType -eq 'Fixed' | ForEach-Object {\n  Write-Host \"Optimizing drive $($_.DriveLetter):...\"\n  Optimize-Volume -DriveLetter $_.DriveLetter -ReTrim -Verbose\n}\nWrite-Host 'Drive optimization complete'"
+      "Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveType -eq 'Fixed' } | ForEach-Object {\n  Write-Host \"Optimizing drive $($_.DriveLetter):...\"\n  Optimize-Volume -DriveLetter $_.DriveLetter -ReTrim -Verbose\n}\nWrite-Host 'Drive optimization complete'"
     ]
   },
   "MspMaintWindowsUpdate": {
@@ -104,7 +104,7 @@
     "category": "Security",
     "RequiresAdmin": true,
     "InvokeScript": [
-      "Get-BitLockerVolume | Select-Object MountPoint, VolumeStatus, EncryptionPercentage, ProtectionStatus | Format-Table -AutoSize | Out-String | Write-Host\n$kp = (Get-BitLockerVolume -MountPoint 'C').KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }\nif ($kp) {\n  Write-Host ''\n  Write-Host 'Recovery Password Protector(s) for C:'\n  $kp | Select-Object KeyProtectorId, KeyProtectorType, RecoveryPassword | Format-List | Out-String | Write-Host\n} else {\n  Write-Host ''\n  Write-Host 'No RecoveryPassword protector found on C:'\n}"
+      "Get-BitLockerVolume | Select-Object MountPoint, VolumeStatus, EncryptionPercentage, ProtectionStatus | Format-Table -AutoSize | Out-String | Write-Host\n$kp = (Get-BitLockerVolume -MountPoint 'C').KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }\nif ($kp) {\n  Write-Host ''\n  Write-Host 'Recovery Password Protector(s) for C:'\n  $kp | Select-Object KeyProtectorId, KeyProtectorType | Format-List | Out-String | Write-Host\n  Write-Host 'Recovery password not shown - tool output is saved to the MSP Tool log and transcript.'\n  Write-Host 'To view it, check AD/Entra ID/your RMM, or run in a separate (unlogged) elevated session:'\n  Write-Host '  manage-bde -protectors -get C: -Type RecoveryPassword'\n} else {\n  Write-Host ''\n  Write-Host 'No RecoveryPassword protector found on C:'\n}"
     ]
   },
   "MspSecLocalAdmins": {

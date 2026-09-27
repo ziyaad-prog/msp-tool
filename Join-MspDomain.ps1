@@ -34,10 +34,6 @@ $ErrorActionPreference = 'Stop'
 # it reflects only what was bound to that function's own invocation, not the script's.
 $ScriptBoundParameters = $PSBoundParameters
 
-if (-not $Domain) {
-    $Domain = Get-MspDefaultDomainSuggestion
-}
-
 function Write-Section {
     param([string]$Title)
     Write-Host ""
@@ -360,6 +356,10 @@ Invoke-MspElevation
 
 if (-not (Test-MspElevated)) {
     throw "This script must be run from an elevated PowerShell session."
+}
+
+if (-not $Domain) {
+    $Domain = Get-MspDefaultDomainSuggestion
 }
 
 while ($true) {
