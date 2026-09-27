@@ -50,7 +50,10 @@ function Invoke-MspProcedure {
 
         [switch]$Interactive,
 
-        [scriptblock]$OnLog
+        [scriptblock]$OnLog,
+
+        # Checked before each step; returning $true ends the procedure (a running tool is never interrupted)
+        [scriptblock]$ShouldStop
     )
 
     if (-not $OnLog) {
@@ -81,6 +84,11 @@ function Invoke-MspProcedure {
         }
 
         foreach ($step in @($section.Steps)) {
+            if ($ShouldStop -and (& $ShouldStop)) {
+                & $OnLog ""
+                & $OnLog "[STOP] Procedure stopped - remaining steps were not run"
+                return
+            }
             $stepNum++
             $label = "[$stepNum] $($step.Title)"
 

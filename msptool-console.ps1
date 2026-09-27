@@ -76,6 +76,21 @@ if ($Tools) {
     $Tools = @($Tools | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
 
+# RMM agents (e.g. CWA) often start 32-bit PowerShell on 64-bit Windows. That process sees a
+# redirected System32 and registry (no dsregcmd, BitLocker module or Office C2R keys), so re-run
+# in 64-bit PowerShell, in the same console, passing the same arguments and exit code back.
+if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+    $ps64 = Join-Path $env:windir 'sysnative\WindowsPowerShell\v1.0\powershell.exe'
+    if (Test-Path $ps64) {
+        $relaunchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $MyInvocation.MyCommand.Path)
+        foreach ($bound in $ScriptBoundParameters.GetEnumerator()) {
+            if ($bound.Value -is [switch]) { if ($bound.Value.IsPresent) { $relaunchArgs += "-$($bound.Key)" } }
+            else { $relaunchArgs += "-$($bound.Key)"; $relaunchArgs += (@($bound.Value) -join ',') }
+        }
+        & $ps64 @relaunchArgs
+        exit $LASTEXITCODE
+    }
+}
 # ---------------------------------------------------------------------------
 # Logging: capture all actions, inputs, and command output to a file
 # ---------------------------------------------------------------------------
@@ -96,7 +111,7 @@ function Write-MspHeader {
     Write-MspLog "Computer : $env:COMPUTERNAME"
     Write-MspLog "User     : $env:USERDOMAIN\$env:USERNAME"
     Write-MspLog "Started  : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-    Write-MspLog "PS       : $($PSVersionTable.PSVersion)"
+    Write-MspLog "PS       : $($PSVersionTable.PSVersion) ($(if ([Environment]::Is64BitProcess) { '64-bit' } else { '32-bit' }))"
     Write-MspLog "--- Invocation inputs ---"
     foreach ($bound in $ScriptBoundParameters.GetEnumerator()) {
         if ($bound.Key -eq 'LogFile') { continue }

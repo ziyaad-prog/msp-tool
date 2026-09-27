@@ -127,8 +127,15 @@ function Show-MspDomainStatus {
                 Write-Host "  Secure Channel: BROKEN (run: Test-ComputerSecureChannel -Repair, or rejoin the domain)" -ForegroundColor Red
             }
 
-            $detail = Test-ComputerSecureChannel -Verbose
-            Write-Host ("  DC Contacted  : {0}" -f $detail.Server)
+            # Test-ComputerSecureChannel only returns true/false - ask nltest which DC the channel uses
+            $dc = $null
+            $scQuery = & nltest.exe "/sc_query:$($status.Domain)" 2>$null
+            $dcLine = $scQuery | Where-Object { $_ -match 'Trusted DC Name\s+(\S+)' } | Select-Object -First 1
+            if ($dcLine -and $dcLine -match 'Trusted DC Name\s+(\S+)') { $dc = $Matches[1].TrimStart('\') }
+            if (-not $dc) {
+                try { $dc = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain().FindDomainController().Name + ' (located, not necessarily the secure-channel DC)' } catch { }
+            }
+            Write-Host ("  DC Contacted  : {0}" -f $(if ($dc) { $dc } else { 'unknown' }))
         }
         catch {
             Write-Host ("  Secure Channel: ERROR - {0}" -f $_.Exception.Message) -ForegroundColor Red
@@ -175,8 +182,9 @@ function Join-MspDomainToAD {
     }
     if ($TargetOU)   { $joinParams['OU'] = $TargetOU; Write-Host ("  Target OU    : {0}" -f $TargetOU) }
     if ($ComputerName) {
-        Write-Host ("  Renaming computer to: {0}" -f $ComputerName)
-        Rename-Computer -NewName $ComputerName -Force -ErrorAction Stop | Out-Null
+        # Add-Computer -NewName renames and joins in one step; a separate Rename-Computer first
+        # leaves a pending rename that makes the join fail
+        Write-Host ("  New name     : {0} (applied with the join)" -f $ComputerName)
         $joinParams['NewName'] = $ComputerName
     }
 
@@ -289,7 +297,9 @@ function Show-MspMenu {
     Write-Host ""
 
     while ($true) {
-        $choice = Read-Host "Select an option"
+        $choice = Read-Host "Select an option (blank = Exit)"
+        # Blank (or unattended/EOF) input means Exit instead of looping forever
+        if ([string]::IsNullOrWhiteSpace($choice)) { return $options[$options.Count - 1].Key }
         if ($options.Key -contains $choice) {
             return $choice
         }
@@ -304,7 +314,8 @@ function Invoke-MspJoinFlow {
     $defaultDomain = Get-MspDefaultDomainSuggestion
     $script:Domain = Read-MspDomainPrompt -Message 'Enter target domain FQDN (e.g. corp.contoso.com)' -DefaultValue $Domain
     if (-not $script:Domain) {
-        throw "A domain name is required."
+        Write-Host "No domain entered - cancelled." -ForegroundColor Yellow
+        return $false
     }
 
     if (-not (Test-MspDomainConnectivity -TargetDomain $script:Domain)) {
@@ -319,8 +330,8 @@ function Invoke-MspJoinFlow {
     if ($joined) {
         if (-not $NoRestart) {
             Write-Host ""
-            $answer = Read-Host "Restart now to complete the join? (Y/n)"
-            if ($answer -notmatch '^n') {
+            $answer = Read-Host "Restart now to complete the join? (y/N)"
+            if ($answer -match '^(y|yes)$') {
                 Restart-Computer -Force
             }
             else {
@@ -331,6 +342,7 @@ function Invoke-MspJoinFlow {
             Write-Host "Reboot required to finish joining '$($script:Domain)' (-NoRestart was set)." -ForegroundColor Yellow
         }
     }
+    return [bool]$joined
 }
 
 function Invoke-MspConnectivityFlow {
@@ -383,7 +395,8 @@ while ($true) {
                 }
             }
             else {
-                Invoke-MspJoinFlow
+                # After a successful join the status/menu would be stale until the restart - stop here
+                if (Invoke-MspJoinFlow) { exit 0 }
                 break
             }
         }
@@ -393,8 +406,8 @@ while ($true) {
                 Write-Host "Repairing secure channel..."
                 if (Test-ComputerSecureChannel -Repair) {
                     Write-Host "Secure channel repaired. A restart is recommended." -ForegroundColor Green
-                    $answer = Read-Host "Restart now? (Y/n)"
-                    if ($answer -notmatch '^n') { Restart-Computer -Force }
+                    $answer = Read-Host "Restart now? (y/N)"
+                    if ($answer -match '^(y|yes)$') { Restart-Computer -Force }
                 }
                 else {
                     Write-Host "Repair failed. Consider leaving and rejoining the domain." -ForegroundColor Red
@@ -411,14 +424,22 @@ while ($true) {
             }
             else {
                 Write-Section "Leave Domain"
-                Write-Warning "This will unjoin the workstation from the domain and reboot."
-                $confirm = Read-Host "Are you sure? (y/N)"
-                if ($confirm -match '^[Yy]') {
-                    $leaveCred = Get-Credential -Message "Domain account with rights to remove this computer"
-                    if ($leaveCred) {
-                        Remove-Computer -UnjoinDomainCredential $leaveCred -Force -Restart
-                    }
+                Write-Warning "This will unjoin the workstation from '$($status.Domain)'. Domain users will not be able to sign in after the restart."
+                $confirm = Read-Host "Type YES (uppercase) to leave the domain (anything else cancels)"
+                if ($confirm -cne 'YES') { Write-Host "Cancelled." -ForegroundColor Yellow; continue }
+                $leaveCred = Get-Credential -Message "Domain account with rights to remove this computer"
+                if (-not $leaveCred) { Write-Host "Credentials required - cancelled." -ForegroundColor Yellow; continue }
+                try {
+                    Remove-Computer -UnjoinDomainCredential $leaveCred -Force -ErrorAction Stop
+                    Write-Host "SUCCESS: Removed from the domain. A restart is required to finish." -ForegroundColor Green
                 }
+                catch {
+                    Write-Host "FAILED to leave the domain: $($_.Exception.Message)" -ForegroundColor Red
+                    continue
+                }
+                $answer = Read-Host "Restart now? (y/N)"
+                if ($answer -match '^(y|yes)$') { Restart-Computer -Force }
+                else { Write-Host "Reboot later to complete the unjoin." -ForegroundColor Yellow }
                 exit 0
             }
         }

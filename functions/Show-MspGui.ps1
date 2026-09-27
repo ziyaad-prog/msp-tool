@@ -1,4 +1,4 @@
-﻿function Show-MspGui {
+function Show-MspGui {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
@@ -9,12 +9,13 @@
 
         [string[]]$ProcedureNames = @(),
 
-        [scriptblock]$OnRun,
-
-        [scriptblock]$OnProcedure
+        # Tool/procedure output is appended here as well as to the on-screen log
+        [string]$LogFile
     )
 
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+
+    $repoRoot = Split-Path -Parent $PSScriptRoot
 
     $categories = $ToolConfig.Values |
         ForEach-Object { $_.category } |
@@ -23,7 +24,7 @@
     $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="MSP Tool" Height="720" Width="1100" MinHeight="600" MinWidth="900"
+        Title="MSP Tool" Height="760" Width="1100" MinHeight="600" MinWidth="900"
         WindowStartupLocation="CenterScreen" Background="#1E1E2E">
   <Window.Resources>
     <Style TargetType="TextBlock">
@@ -100,8 +101,9 @@
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
-      <RowDefinition Height="200"/>
+      <RowDefinition Height="220"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
@@ -109,42 +111,49 @@
       <Image x:Name="LogoImage" Height="40" Margin="0,0,12,0" VerticalAlignment="Center"/>
       <TextBlock Text="MSP Tool" FontSize="24" FontWeight="Bold" Foreground="#89B4FA" VerticalAlignment="Center"/>
       <TextBlock x:Name="AdminBadge" Margin="16,0,0,0" VerticalAlignment="Center" FontSize="12"/>
+      <TextBlock x:Name="StatusText" Margin="16,0,0,0" VerticalAlignment="Center" FontSize="12" Foreground="#F9E2AF"/>
     </StackPanel>
 
-    <Grid Grid.Row="1" Margin="0,0,0,8">
+    <Grid Grid.Row="1" Margin="0,0,0,4">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
-      <TextBox x:Name="SearchBox" Grid.Column="0" Text="" Tag="Search tools..."/>
+      <TextBox x:Name="SearchBox" Grid.Column="0" Text="" ToolTip="Search tools by name or description"/>
       <ComboBox x:Name="PresetCombo" Grid.Column="1" Margin="8,0,0,0"/>
       <Button x:Name="ApplyPresetBtn" Grid.Column="2" Content="Apply Preset"/>
       <Button x:Name="ClearSearchBtn" Grid.Column="3" Content="Clear Filter"/>
     </Grid>
 
-    <TabControl x:Name="CategoryTabs" Grid.Row="2" Background="#181825" BorderBrush="#45475A">
+    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8" HorizontalAlignment="Right">
+      <TextBlock Text="Procedure:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+      <ComboBox x:Name="ProcedureCombo" MinWidth="240"/>
+      <CheckBox x:Name="AutoOnlyCheck" Content="Automated steps only" VerticalAlignment="Center" Margin="12,0,4,0"/>
+      <Button x:Name="RunProcedureBtn" Content="Run Procedure"/>
+    </StackPanel>
+
+    <TabControl x:Name="CategoryTabs" Grid.Row="3" Background="#181825" BorderBrush="#45475A">
       <TabItem Header="All Tools" Tag="All"/>
     </TabControl>
 
-    <Border Grid.Row="3" Margin="0,12,0,12" Background="#181825" BorderBrush="#45475A" BorderThickness="1" CornerRadius="4">
+    <Border Grid.Row="4" Margin="0,12,0,12" Background="#181825" BorderBrush="#45475A" BorderThickness="1" CornerRadius="4">
       <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
         <TextBlock Text="Output Log" Margin="8,6" FontWeight="SemiBold" Foreground="#A6E3A1"/>
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="8">
-          <TextBox x:Name="LogBox" IsReadOnly="True" TextWrapping="Wrap" Background="Transparent"
-                   BorderThickness="0" Foreground="#FFFFFF" FontFamily="Consolas" FontSize="12"/>
-        </ScrollViewer>
+        <TextBox x:Name="LogBox" Grid.Row="1" Margin="8" IsReadOnly="True" TextWrapping="Wrap" Background="Transparent"
+                 VerticalScrollBarVisibility="Auto" BorderThickness="0" Foreground="#FFFFFF" FontFamily="Consolas" FontSize="12"/>
       </Grid>
     </Border>
 
-    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+    <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
       <Button x:Name="SelectAllBtn" Content="Select All"/>
       <Button x:Name="ClearAllBtn" Content="Clear All"/>
+      <Button x:Name="StopBtn" Content="Stop" IsEnabled="False"/>
       <Button x:Name="RunBtn" Content="Run Selected" Background="#89B4FA" Foreground="#1E1E2E" FontWeight="Bold"/>
     </StackPanel>
   </Grid>
@@ -158,16 +167,21 @@
     $presetCombo = $window.FindName('PresetCombo')
     $applyPresetBtn = $window.FindName('ApplyPresetBtn')
     $clearSearchBtn = $window.FindName('ClearSearchBtn')
+    $procedureCombo = $window.FindName('ProcedureCombo')
+    $autoOnlyCheck = $window.FindName('AutoOnlyCheck')
+    $runProcedureBtn = $window.FindName('RunProcedureBtn')
     $categoryTabs = $window.FindName('CategoryTabs')
     $logBox = $window.FindName('LogBox')
     $selectAllBtn = $window.FindName('SelectAllBtn')
     $clearAllBtn = $window.FindName('ClearAllBtn')
+    $stopBtn = $window.FindName('StopBtn')
     $runBtn = $window.FindName('RunBtn')
     $adminBadge = $window.FindName('AdminBadge')
+    $statusText = $window.FindName('StatusText')
     $logoImage = $window.FindName('LogoImage')
 
     # Load logo from assets folder if present
-    $logoPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'assets\logo.png'
+    $logoPath = Join-Path $repoRoot 'assets\logo.png'
     if (Test-Path $logoPath) {
         try {
             $bitmap = New-Object System.Windows.Media.Imaging.BitmapImage
@@ -197,19 +211,16 @@
 
     $checkboxMap = @{}
     $allCheckboxes = [System.Collections.Generic.List[object]]::new()
-    $syncLock = $false
+    # Search hides a tool's description with its checkbox, and a category header once all its tools are hidden
+    $descriptionFor = @{}
+    $headerTools = @{}
 
     function Sync-Checkbox {
         param($Sender, [bool]$Value)
-        if ($syncLock) { return }
-        $syncLock = $true
-        try {
-            if (-not $Sender.Tag) { return }
-            foreach ($c in $checkboxMap[$Sender.Tag]) {
-                if ($c.IsChecked -ne $Value) { $c.IsChecked = $Value }
-            }
+        if (-not $Sender.Tag) { return }
+        foreach ($c in $checkboxMap[$Sender.Tag]) {
+            if ($c.IsChecked -ne $Value) { $c.IsChecked = $Value }
         }
-        finally { $syncLock = $false }
     }
 
     function Add-ToolCheckboxes {
@@ -233,6 +244,7 @@
             $header.Foreground = '#89B4FA'
             $header.Margin = '0,12,0,6'
             [void]$Panel.Children.Add($header)
+            $headerTools[$header] = [System.Collections.Generic.List[object]]::new()
 
             foreach ($entry in ($group.Group | Sort-Object {
                 if ($_.Value.PSObject.Properties.Name -contains 'Order') { $_.Value.Order } else { 9999 }
@@ -255,6 +267,7 @@
                 [void]$checkboxMap[$id].Add($cb)
                 if ($checkboxMap[$id].Count -gt 1) { $cb.IsChecked = $checkboxMap[$id][0].IsChecked }
                 [void]$allCheckboxes.Add($cb)
+                [void]$headerTools[$header].Add($cb)
 
                 $cb.Add_Checked({ Sync-Checkbox -Sender $sender -Value $true })
                 $cb.Add_Unchecked({ Sync-Checkbox -Sender $sender -Value $false })
@@ -268,6 +281,7 @@
                 $desc.TextWrapping = 'Wrap'
                 $desc.Margin = '24,0,0,4'
                 [void]$Panel.Children.Add($desc)
+                $descriptionFor[$cb] = $desc
             }
         }
     }
@@ -300,12 +314,169 @@
     $presetCombo.ItemsSource = @('') + ($PresetConfig.Keys | Sort-Object)
     $presetCombo.SelectedIndex = 0
 
+    $procedureCombo.ItemsSource = @($ProcedureNames)
+    if ($ProcedureNames.Count) { $procedureCombo.SelectedIndex = 0 }
+    else { $procedureCombo.IsEnabled = $false; $runProcedureBtn.IsEnabled = $false; $autoOnlyCheck.IsEnabled = $false }
+
     function Write-LogLine {
         param([string]$Message)
         $timestamp = Get-Date -Format 'HH:mm:ss'
         $logBox.AppendText("[$timestamp] $Message`r`n")
         $logBox.ScrollToEnd()
     }
+
+    # ------------------------------------------------------------------
+    # Input dialogs: tools run in a background runspace, where Read-Host and
+    # Get-Credential are replaced by functions that call these on the UI thread.
+    # ------------------------------------------------------------------
+    function Show-MspInputDialog {
+        param([string]$Message, [bool]$Secure, [bool]$Credential)
+
+        $dialogXaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="MSP Tool - Input required" Width="560" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="Manual" Background="#1E1E2E" ShowInTaskbar="False">
+  <StackPanel Margin="16">
+    <TextBlock x:Name="PromptText" Foreground="#FFFFFF" FontFamily="Segoe UI" FontSize="13" TextWrapping="Wrap" Margin="0,0,0,10"/>
+    <TextBlock x:Name="UserLabel" Text="User name" Foreground="#A6ADC8" Margin="0,0,0,2"/>
+    <TextBox x:Name="UserBox" Background="#313244" Foreground="#FFFFFF" BorderBrush="#45475A" Padding="6,4" Margin="0,0,0,8"/>
+    <TextBlock x:Name="PasswordLabel" Text="Password" Foreground="#A6ADC8" Margin="0,0,0,2"/>
+    <PasswordBox x:Name="PasswordBox" Background="#313244" Foreground="#FFFFFF" BorderBrush="#45475A" Padding="6,4"/>
+    <TextBox x:Name="InputBox" Background="#313244" Foreground="#FFFFFF" BorderBrush="#45475A" Padding="6,4"/>
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+      <Button x:Name="OkBtn" Content="OK" IsDefault="True" MinWidth="80" Margin="4" Padding="10,4"/>
+      <Button x:Name="CancelBtn" Content="Cancel" IsCancel="True" MinWidth="80" Margin="4" Padding="10,4"/>
+    </StackPanel>
+  </StackPanel>
+</Window>
+"@
+        $dialog = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader ([xml]$dialogXaml)))
+        $dialog.Owner = $window
+        # Sit near the top of the main window so the output log (which usually holds the list being chosen from) stays visible
+        $dialog.Left = $window.Left + [math]::Max(0, ($window.ActualWidth - $dialog.Width) / 2)
+        $dialog.Top = $window.Top + 90
+
+        $promptText = $dialog.FindName('PromptText')
+        $userLabel = $dialog.FindName('UserLabel'); $userBox = $dialog.FindName('UserBox')
+        $passwordLabel = $dialog.FindName('PasswordLabel'); $passwordBox = $dialog.FindName('PasswordBox')
+        $inputBox = $dialog.FindName('InputBox')
+        $promptText.Text = if ($Message) { $Message } else { 'Input required' }
+
+        if (-not $Credential) { $userLabel.Visibility = 'Collapsed'; $userBox.Visibility = 'Collapsed' }
+        if ($Credential -or $Secure) { $inputBox.Visibility = 'Collapsed'; if (-not $Credential) { $passwordLabel.Visibility = 'Collapsed' } }
+        else { $passwordLabel.Visibility = 'Collapsed'; $passwordBox.Visibility = 'Collapsed' }
+
+        $dialog.FindName('OkBtn').Add_Click({ $dialog.DialogResult = $true })
+        $dialog.Add_ContentRendered({
+            if ($Credential) { [void]$userBox.Focus() } elseif ($Secure) { [void]$passwordBox.Focus() } else { [void]$inputBox.Focus() }
+        })
+
+        $ok = [bool]$dialog.ShowDialog()
+        if ($Credential) {
+            if ($ok -and $userBox.Text) { return New-Object System.Management.Automation.PSCredential($userBox.Text, $passwordBox.SecurePassword) }
+            return $null
+        }
+        if ($Secure) {
+            if ($ok -and $passwordBox.SecurePassword.Length) { return $passwordBox.SecurePassword }
+            return $null
+        }
+        if ($ok) { return $inputBox.Text }
+        return ''
+    }
+
+    # Everything the background runspace touches on the UI thread. The delegates are created
+    # here, in the UI runspace, so they run in it when the dispatcher invokes them.
+    $sync = [hashtable]::Synchronized(@{})
+    $sync.Window = $window
+    $sync.AppendLog = [Action[object]] { param($m) Write-LogLine "$m" }
+    $sync.Prompt = [Func[object, object, object]] { param($msg, $secure) Show-MspInputDialog -Message "$msg" -Secure ([bool]$secure) }
+    $sync.Credential = [Func[object, object]] { param($msg) Show-MspInputDialog -Message "$msg" -Credential $true }
+
+    $runnerScript = {
+        param($sync, $repoRoot, $mode, $target, $autoOnly, $toolConfig, $logFile)
+        $ErrorActionPreference = 'Stop'
+        $ScriptRoot = $repoRoot
+        . (Join-Path $repoRoot 'functions\Invoke-MspTool.ps1')
+        . (Join-Path $repoRoot 'functions\Invoke-MspProcedure.ps1')
+
+        # Tools call these by name; route them to GUI dialogs (a runspace has no console to prompt in)
+        function global:Read-Host {
+            param([Parameter(Position = 0)][object]$Prompt, [switch]$AsSecureString)
+            $sync.Window.Dispatcher.Invoke($sync.Prompt, [object[]]@("$Prompt", [bool]$AsSecureString))
+        }
+        function global:Get-Credential {
+            param([Parameter(Position = 0)][object]$UserName, [string]$Message, [string]$Title)
+            $text = if ($Message) { $Message } elseif ($Title) { $Title } else { 'Enter credentials' }
+            $sync.Window.Dispatcher.Invoke($sync.Credential, [object[]]@($text))
+        }
+
+        $onLog = {
+            param($m)
+            $sync.Window.Dispatcher.Invoke($sync.AppendLog, [object[]]@("$m"))
+            if ($logFile) {
+                try { Add-Content -Path $logFile -Value ('[{0}] {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) -Encoding UTF8 } catch { }
+            }
+        }
+
+        # Stop is cooperative: checked between tools/steps, never mid-tool, so a tool's cleanup
+        # (e.g. restarting services it stopped) always runs to completion
+        $shouldStop = { [bool]$sync.StopRequested }
+
+        if ($mode -eq 'Procedure') {
+            & $onLog "ACTION: Running procedure '$target'"
+            $procedure = Resolve-MspProcedure -Name $target
+            Invoke-MspProcedure -Procedure $procedure -ToolConfig $toolConfig -AutoOnly:$autoOnly -OnLog $onLog -ShouldStop $shouldStop
+        }
+        else {
+            & $onLog "ACTION: Running tools ($($target -join ', '))"
+            Invoke-MspToolBatch -ToolIds $target -ToolConfig $toolConfig -OnLog $onLog -ShouldStop $shouldStop | Out-Null
+        }
+    }
+
+    # Current background job - a hashtable so event handlers can update it without scoping issues
+    $run = @{ Job = $null; CloseWhenDone = $false }
+
+    function Set-RunningState {
+        param([bool]$Running, [string]$Status = '')
+        $runBtn.IsEnabled = -not $Running
+        $runProcedureBtn.IsEnabled = (-not $Running) -and $ProcedureNames.Count -gt 0
+        $applyPresetBtn.IsEnabled = -not $Running
+        $stopBtn.IsEnabled = $Running
+        $statusText.Text = $Status
+    }
+
+    function Start-MspBackgroundRun {
+        param([string]$Mode, $Target, [bool]$AutoOnly)
+
+        $runspace = [runspacefactory]::CreateRunspace()
+        $runspace.ApartmentState = 'STA'
+        $runspace.ThreadOptions = 'ReuseThread'
+        $runspace.Open()
+        $ps = [powershell]::Create()
+        $ps.Runspace = $runspace
+        $sync.StopRequested = $false
+        [void]$ps.AddScript($runnerScript).AddArgument($sync).AddArgument($repoRoot).AddArgument($Mode).AddArgument($Target).AddArgument($AutoOnly).AddArgument($ToolConfig).AddArgument($LogFile)
+        $run.Job = @{ PowerShell = $ps; Runspace = $runspace; Handle = $ps.BeginInvoke() }
+        Set-RunningState -Running $true -Status 'Running...'
+        $timer.Start()
+    }
+
+    $timer = New-Object System.Windows.Threading.DispatcherTimer
+    $timer.Interval = [TimeSpan]::FromMilliseconds(300)
+    $timer.Add_Tick({
+        $job = $run.Job
+        if (-not $job -or -not $job.Handle.IsCompleted) { return }
+        $timer.Stop()
+        try { [void]$job.PowerShell.EndInvoke($job.Handle) }
+        catch { Write-LogLine "[ERROR] $($_.Exception.InnerException.Message)$($_.Exception.Message)" }
+        foreach ($err in $job.PowerShell.Streams.Error) { Write-LogLine "[ERROR] $err" }
+        $job.PowerShell.Dispose(); $job.Runspace.Dispose()
+        $run.Job = $null
+        Set-RunningState -Running $false
+        Write-LogLine $(if ($sync.StopRequested) { 'Stopped by user (the tool that was running finished first).' } else { 'Batch complete.' })
+        if ($run.CloseWhenDone) { $window.Close() }
+    })
 
     Write-LogLine 'MSP Tool ready. Select tools or apply a preset, then click Run Selected.'
 
@@ -345,6 +516,11 @@
             $desc = "$($cb.ToolTip)".ToLowerInvariant()
             $match = [string]::IsNullOrWhiteSpace($filter) -or $text.Contains($filter) -or $desc.Contains($filter)
             $cb.Visibility = if ($match) { 'Visible' } else { 'Collapsed' }
+            if ($descriptionFor.ContainsKey($cb)) { $descriptionFor[$cb].Visibility = $cb.Visibility }
+        }
+        foreach ($header in $headerTools.Keys) {
+            $anyVisible = @($headerTools[$header] | Where-Object { $_.Visibility -ne 'Collapsed' }).Count -gt 0
+            $header.Visibility = if ($anyVisible) { 'Visible' } else { 'Collapsed' }
         }
     })
 
@@ -354,16 +530,38 @@
             Write-LogLine 'No tools selected.'
             return
         }
-
-        $runBtn.IsEnabled = $false
         Write-LogLine "Running $($selected.Count) tool(s)..."
+        Start-MspBackgroundRun -Mode 'Tools' -Target $selected -AutoOnly $false
+    })
 
-        try {
-            & $OnRun $selected { param($m) Write-LogLine $m }
-            Write-LogLine 'Batch complete.'
+    $runProcedureBtn.Add_Click({
+        $name = $procedureCombo.SelectedItem
+        if (-not $name) { return }
+        Start-MspBackgroundRun -Mode 'Procedure' -Target "$name" -AutoOnly ([bool]$autoOnlyCheck.IsChecked)
+    })
+
+    $stopBtn.Add_Click({
+        if ($run.Job -and -not $sync.StopRequested) {
+            $sync.StopRequested = $true
+            Write-LogLine '[STOP] Stop requested - the tool that is running now will finish (including its cleanup), then no further tools run.'
+            $statusText.Text = 'Stopping after the current tool...'
+            $stopBtn.IsEnabled = $false
         }
-        finally {
-            $runBtn.IsEnabled = $true
+    })
+
+    $window.Add_Closing({
+        param($s, $e)
+        if ($run.Job) {
+            # Never tear down a running tool: it may have stopped services it still needs to restart
+            $e.Cancel = $true
+            if ($run.CloseWhenDone) { return }
+            $answer = [System.Windows.MessageBox]::Show($window, "Tools are still running.`n`nStop after the current tool finishes, then close MSP Tool?", 'MSP Tool', 'YesNo', 'Warning')
+            if ($answer -ne 'Yes') { return }
+            $sync.StopRequested = $true
+            $run.CloseWhenDone = $true
+            $stopBtn.IsEnabled = $false
+            $statusText.Text = 'Closing after the current tool finishes...'
+            Write-LogLine '[STOP] MSP Tool will close once the current tool has finished.'
         }
     })
 

@@ -4,6 +4,8 @@
     "Tools": [
       "MspDiagSystemInfo",
       "MspDiagNetwork",
+      "MspDiagPendingReboot",
+      "MspDiagAgentHealth",
       "MspSecDefenderStatus",
       "MspSecFirewall",
       "MspSetupHostname"
@@ -23,10 +25,13 @@
   "SecurityAudit": {
     "Description": "Security posture review",
     "Tools": [
+      "MspSecBaseline",
       "MspSecDefenderStatus",
       "MspSecFirewall",
       "MspSecBitLocker",
       "MspSecLocalAdmins",
+      "MspSecRemoteAccessAudit",
+      "MspSecFailedLogons",
       "MspDiagEventLog"
     ]
   },
@@ -38,11 +43,21 @@
       "MspRepairSFC"
     ]
   },
+  "PatchingRepair": {
+    "Description": "Failed Windows Update / patching: check pending reboot, reset update components, then DISM and SFC",
+    "Tools": [
+      "MspSetupRestorePoint",
+      "MspDiagPendingReboot",
+      "MspRepairWindowsUpdateReset",
+      "MspRepairDISM",
+      "MspRepairSFC"
+    ]
+  },
   "NewWorkstation": {
     "Description": "Baseline setup for new machines",
     "Tools": [
       "MspSetupRestorePoint",
-      "MspSetupPowerPlan",
+      "MspSetupWorkstationBaseline",
       "MspSetupTimeSync",
       "MspMaintTempCleanup",
       "MspSecDefenderScan",
@@ -75,10 +90,21 @@
     ]
   },
   "DomainHealthCheck": {
-    "Description": "Domain join status, secure channel health, and connectivity",
+    "Description": "Domain and Entra join status, secure channel health, and connectivity",
     "Tools": [
       "MspDomainStatus",
+      "MspDomainEntraStatus",
       "MspDiagNetwork"
+    ]
+  },
+  "TicketEvidence": {
+    "Description": "Collect evidence for a ticket: system report, event/reliability logs, shutdown history, then zip everything",
+    "Tools": [
+      "MspDiagSystemInfo",
+      "MspDiagEventLog",
+      "MspDiagShutdownHistory",
+      "MspDiagPendingReboot",
+      "MspDiagTicketBundle"
     ]
   }
 }

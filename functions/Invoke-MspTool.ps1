@@ -1,3 +1,17 @@
+function Get-MspToolScripts {
+    # A tool's code lives in the file named by "Script" (path relative to the repo root);
+    # inline "InvokeScript" strings are still accepted for custom tools.
+    param([Parameter(Mandatory)]$Tool)
+
+    if ($Tool.PSObject.Properties.Name -contains 'Script' -and $Tool.Script) {
+        $root = Split-Path -Parent $PSScriptRoot
+        $path = Join-Path $root $Tool.Script
+        if (-not (Test-Path -LiteralPath $path)) { throw "Tool script not found: $path" }
+        return , (Get-Content -LiteralPath $path -Raw -Encoding UTF8)
+    }
+    return , @($Tool.InvokeScript)
+}
+
 function Invoke-MspTool {
     [CmdletBinding()]
     param(
@@ -26,7 +40,7 @@ function Invoke-MspTool {
     }
 
     try {
-        foreach ($scriptBlock in @($tool.InvokeScript)) {
+        foreach ($scriptBlock in @(Get-MspToolScripts -Tool $tool)) {
             $block = [scriptblock]::Create($scriptBlock)
             # *>&1 (not 2>&1) so Write-Host/verbose/warning output reaches OnLog - the GUI log
             # and the .log file - too. Piping streams each line as it's produced, so an
@@ -55,12 +69,20 @@ function Invoke-MspToolBatch {
         [Parameter(Mandatory)]
         [hashtable]$ToolConfig,
 
-        [scriptblock]$OnLog
+        [scriptblock]$OnLog,
+
+        # Checked before each tool; returning $true ends the batch. Never interrupts a running tool,
+        # so a tool's own cleanup (e.g. restarting services it stopped) always completes.
+        [scriptblock]$ShouldStop
     )
 
     $results = @()
     foreach ($id in $ToolIds) {
-& $OnLog "[WAIT] Starting next tool only after the previous one completes"
+        if ($ShouldStop -and (& $ShouldStop)) {
+            & $OnLog "[STOP] Stopped before '$id' - remaining tools were not run"
+            break
+        }
+        & $OnLog "[WAIT] Starting next tool only after the previous one completes"
         $results += Invoke-MspTool -ToolId $id -ToolConfig $ToolConfig -OnLog $OnLog
         & $OnLog ''
     }

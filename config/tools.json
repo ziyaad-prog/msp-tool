@@ -1,210 +1,269 @@
 {
   "MspDiagSystemInfo": {
     "Content": "Export System Information",
-    "Description": "Collects OS, hardware, disk, and network details (including ipconfig /all and route print) to a text report.",
+    "Description": "Collects OS, uptime, pending reboot, CPU, BIOS/serial, TPM, Secure Boot, a Windows 11 readiness indicator, logged-on users, disks, network adapters, installed software, ipconfig /all and route print into a text report plus an HTML version.",
     "category": "Diagnostics",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$reportDir = Join-Path $env:USERPROFILE 'Desktop\\MSP-Reports'\nif (-not (Test-Path $reportDir)) { New-Item -ItemType Directory -Path $reportDir -Force | Out-Null }\n$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'\n$out = Join-Path $reportDir \"system-info-$stamp.txt\"\n$info = @()\n$info += \"=== MSP System Report ===\"\n$info += \"Generated: $(Get-Date)\"\n$info += \"Computer: $env:COMPUTERNAME\"\n$info += \"User: $env:USERNAME\"\n$info += \"\"\n$info += \"--- OS ---\"\nGet-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, LastBootUpTime, TotalVisibleMemorySize, FreePhysicalMemory | Format-List | Out-String | ForEach-Object { $info += $_ }\n$info += \"--- CPU ---\"\nGet-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-List | Out-String | ForEach-Object { $info += $_ }\n$info += \"--- Disks ---\"\nGet-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | Select-Object DeviceID, @{N='SizeGB';E={[math]::Round($_.Size/1GB,2)}}, @{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,2)}}, FileSystem | Format-Table -AutoSize | Out-String | ForEach-Object { $info += $_ }\n$info += \"--- Network Adapters ---\"\nGet-NetAdapter | Where-Object Status -eq 'Up' | Select-Object Name, InterfaceDescription, LinkSpeed, MacAddress | Format-Table -AutoSize | Out-String | ForEach-Object { $info += $_ }\n$info += \"--- ipconfig /all ---\"\n$info += (& \"$env:SystemRoot\\System32\\ipconfig.exe\" /all | Out-String)\n$info += \"--- route print ---\"\n$info += (& \"$env:SystemRoot\\System32\\route.exe\" print | Out-String)\n$info | Out-File -FilePath $out -Encoding UTF8\nWrite-Host \"Report saved: $out\""
-    ]
+    "Script": "tools/MspDiagSystemInfo.ps1"
   },
   "MspDiagEventLog": {
     "Content": "Export Critical Event Logs & Reliability Report",
     "Description": "Exports System/Application error and critical events (24h), saves a Reliability Monitor report (HTML + CSV, 30 days), and opens Reliability Monitor (perfmon /rel).",
     "category": "Diagnostics",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$reportDir = Join-Path $env:USERPROFILE 'Desktop\\MSP-Reports'\nif (-not (Test-Path $reportDir)) { New-Item -ItemType Directory -Path $reportDir -Force | Out-Null }\n$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'\n$since = (Get-Date).AddHours(-24)\nforeach ($log in @('System','Application')) {\n  $events = Get-WinEvent -FilterHashtable @{ LogName = $log; Level = 1,2; StartTime = $since } -ErrorAction SilentlyContinue\n  $out = Join-Path $reportDir \"events-$log-$stamp.csv\"\n  if ($events) {\n    $events | Select-Object TimeCreated, Id, LevelDisplayName, ProviderName, Message | Export-Csv -Path $out -NoTypeInformation\n    Write-Host \"Exported $($events.Count) $log events to $out\"\n  } else {\n    Write-Host \"No critical $log events in last 24 hours\"\n  }\n}\n\n# --- Reliability Monitor (perfmon /rel) ---\n# Its \"Save reliability history\" option is GUI-only, so the saved copy is built from the same\n# data (Win32_ReliabilityRecords / Win32_ReliabilityStabilityMetrics) that Reliability Monitor reads.\nWrite-Host ''\nWrite-Host '--- Reliability Monitor (last 30 days) ---'\n$relSince = (Get-Date).AddDays(-30)\n$failureSources = @('Application Error', 'Application Hang', 'Windows Error Reporting', 'Microsoft-Windows-WER-SystemErrorReporting', 'EventLog', 'Microsoft-Windows-Kernel-Power')\ntry {\n  $records = @(Get-CimInstance Win32_ReliabilityRecords -ErrorAction Stop | Where-Object { $_.TimeGenerated -ge $relSince } | Sort-Object TimeGenerated -Descending | ForEach-Object {\n    $category = if ($failureSources -contains $_.SourceName) { 'Failure' }\n      elseif (($_.SourceName -eq 'Microsoft-Windows-WindowsUpdateClient' -and $_.EventIdentifier -eq 20) -or ($_.SourceName -eq 'MsiInstaller' -and $_.EventIdentifier -eq 11708)) { 'Failed install' }\n      else { 'Information' }\n    [pscustomobject]@{ Time = $_.TimeGenerated; Category = $category; Source = $_.SourceName; EventId = $_.EventIdentifier; Product = $_.ProductName; Message = $_.Message }\n  })\n} catch {\n  Write-Host \"Could not read reliability records: $($_.Exception.Message)\" -ForegroundColor Red\n  $records = @()\n}\ntry {\n  $metrics = @(Get-CimInstance Win32_ReliabilityStabilityMetrics -ErrorAction Stop | Where-Object { $_.TimeGenerated -ge $relSince } | Sort-Object TimeGenerated -Descending)\n} catch { $metrics = @() }\n\n$failures = @($records | Where-Object Category -eq 'Failure')\n$failedInstalls = @($records | Where-Object Category -eq 'Failed install')\nif ($metrics.Count) {\n  $current = [math]::Round($metrics[0].SystemStabilityIndex, 2)\n  $lowest = $metrics | Sort-Object SystemStabilityIndex | Select-Object -First 1\n  Write-Host (\"Stability index : {0} / 10 now, lowest {1} on {2}\" -f $current, [math]::Round($lowest.SystemStabilityIndex, 2), $lowest.TimeGenerated.ToString('yyyy-MM-dd'))\n} else {\n  Write-Host 'Stability index : not available (the Reliability Analysis task may be disabled on this machine)' -ForegroundColor Yellow\n}\nWrite-Host (\"Failures        : {0} ({1} app crashes, {2} app hangs, {3} Windows/shutdown)\" -f $failures.Count, @($failures | Where-Object Source -eq 'Application Error').Count, @($failures | Where-Object Source -eq 'Application Hang').Count, @($failures | Where-Object { $_.Source -notin 'Application Error', 'Application Hang' }).Count)\nWrite-Host (\"Failed installs : {0}\" -f $failedInstalls.Count)\nWrite-Host (\"Total records   : {0}\" -f $records.Count)\nif ($failures.Count) {\n  Write-Host ''\n  Write-Host 'Top failing applications:'\n  $failures | Group-Object Product | Sort-Object Count -Descending | Select-Object -First 5 | ForEach-Object { Write-Host (\"  {0,3}x  {1}\" -f $_.Count, $(if ($_.Name) { $_.Name } else { '(unknown)' })) }\n}\n\nif ($records.Count -or $metrics.Count) {\n  $csvOut = Join-Path $reportDir \"reliability-$stamp.csv\"\n  $records | Select-Object @{N = 'Time'; E = { $_.Time.ToString('yyyy-MM-dd HH:mm:ss') } }, Category, Source, EventId, Product, Message | Export-Csv -Path $csvOut -NoTypeInformation -Encoding UTF8\n\n  $short = { param($t) if (\"$t\".Length -gt 400) { \"$t\".Substring(0, 400) + '...' } else { \"$t\" } }\n  $style = '<style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#222}h1{font-size:22px}h2{font-size:17px;margin-top:28px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border:1px solid #ccc;padding:4px 6px;text-align:left;vertical-align:top;word-break:break-word}td:first-child{white-space:nowrap}th{background:#eee}</style>'\n  $summary = @(\n    [pscustomobject]@{ Item = 'Computer'; Value = $env:COMPUTERNAME }\n    [pscustomobject]@{ Item = 'Generated'; Value = (Get-Date).ToString('yyyy-MM-dd HH:mm') }\n    [pscustomobject]@{ Item = 'Period'; Value = \"$($relSince.ToString('yyyy-MM-dd')) to $((Get-Date).ToString('yyyy-MM-dd'))\" }\n    [pscustomobject]@{ Item = 'Current stability index'; Value = $(if ($metrics.Count) { \"$([math]::Round($metrics[0].SystemStabilityIndex, 2)) / 10\" } else { 'not available' }) }\n    [pscustomobject]@{ Item = 'Failures'; Value = $failures.Count }\n    [pscustomobject]@{ Item = 'Failed installs'; Value = $failedInstalls.Count }\n    [pscustomobject]@{ Item = 'Total records'; Value = $records.Count })\n  $daily = $metrics | Group-Object { $_.TimeGenerated.ToString('yyyy-MM-dd') } | ForEach-Object {\n    [pscustomobject]@{ Date = $_.Name; 'Lowest stability index' = [math]::Round(($_.Group | Measure-Object SystemStabilityIndex -Minimum).Minimum, 2) }\n  }\n  $asRows = { param($list) $list | Select-Object @{N = 'Time'; E = { $_.Time.ToString('yyyy-MM-dd HH:mm') } }, Category, Source, EventId, Product, @{N = 'Message'; E = { & $short $_.Message } } }\n  $body = @(\n    \"<h1>Reliability report - $env:COMPUTERNAME</h1>\"\n    ($summary | ConvertTo-Html -Fragment)\n    '<h2>Failures</h2>'\n    $(if ($failures.Count) { & $asRows $failures | ConvertTo-Html -Fragment } else { '<p>No failures recorded.</p>' })\n    '<h2>Failed installs</h2>'\n    $(if ($failedInstalls.Count) { & $asRows $failedInstalls | ConvertTo-Html -Fragment } else { '<p>No failed installs recorded.</p>' })\n    '<h2>Daily stability index</h2>'\n    $(if ($daily) { $daily | ConvertTo-Html -Fragment } else { '<p>Not available.</p>' })\n    '<h2>All reliability records</h2>'\n    $(if ($records.Count) { & $asRows $records | ConvertTo-Html -Fragment } else { '<p>No records.</p>' })\n  )\n  $htmlOut = Join-Path $reportDir \"reliability-$stamp.html\"\n  ConvertTo-Html -Title \"Reliability report - $env:COMPUTERNAME\" -Head $style -Body ($body -join \"`n\") | Out-File -FilePath $htmlOut -Encoding UTF8\n  Write-Host ''\n  Write-Host \"Reliability report saved: $htmlOut\"\n  Write-Host \"Reliability records (CSV) saved: $csvOut\"\n} else {\n  Write-Host 'No reliability data found - nothing saved.' -ForegroundColor Yellow\n}\n\n# Only open the GUI when there's a visible desktop (not in session 0 / RMM / service context)\nif ((Get-Process -Id $PID).SessionId -ne 0 -and [Environment]::UserInteractive) {\n  Start-Process -FilePath \"$env:SystemRoot\\System32\\perfmon.exe\" -ArgumentList '/rel'\n  Write-Host 'Reliability Monitor opened (perfmon /rel).'\n} else {\n  Write-Host 'No interactive desktop - skipped opening Reliability Monitor. Open the saved HTML report instead.' -ForegroundColor Yellow\n}"
-    ]
+    "Script": "tools/MspDiagEventLog.ps1"
   },
   "MspDiagNetwork": {
     "Content": "Network Connectivity Test",
-    "Description": "Tests DNS resolution and ping to common endpoints (gateway, 8.8.8.8, 1.1.1.1).",
+    "Description": "Tests ping and DNS, shows public IP and proxy settings, checks TCP ports (443, DNS, optional 3389), shows Wi-Fi signal/band/rates (flags weak signal), and optionally runs a traceroute and saves the Windows WLAN report (admin).",
     "category": "Diagnostics",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$targets = @('8.8.8.8','1.1.1.1','google.com')\n$gw = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop\nif ($gw) { $targets = @($gw) + $targets }\nforeach ($t in $targets) {\n  $result = Test-Connection -ComputerName $t -Count 2 -Quiet\n  $status = if ($result) { 'OK' } else { 'FAIL' }\n  Write-Host \"[$status] $t\"\n}\nWrite-Host \"DNS test: $(Resolve-DnsName google.com -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty IPAddress)\""
-    ]
+    "Script": "tools/MspDiagNetwork.ps1"
   },
   "MspDiagDiskHealth": {
     "Content": "Check Disk Health (SMART)",
-    "Description": "Reports disk health status using Get-PhysicalDisk.",
+    "Description": "Reports disk health plus reliability counters per disk (temperature, wear, power-on hours, read/write errors) and SMART predictive failure; flags wear > 80%, temperature > 60C, uncorrected errors and unhealthy disks. Full counters need admin.",
     "category": "Diagnostics",
-    "RequiresAdmin": true,
-    "InvokeScript": [
-      "Get-PhysicalDisk | Select-Object FriendlyName, MediaType, @{N='SizeGB';E={[math]::Round($_.Size/1GB,2)}}, HealthStatus, OperationalStatus | Format-Table -AutoSize | Out-String | Write-Host"
-    ]
+    "RequiresAdmin": false,
+    "Script": "tools/MspDiagDiskHealth.ps1"
   },
   "MspDiagReportView": {
     "Content": "Report View",
-    "Description": "Lists reports saved by other tools (MSP-Reports folder) and MSP Tool logs, and lets you select one to view or open.",
+    "Description": "Lists reports saved by other tools (MSP-Reports folder) and MSP Tool logs to view or open, bundles them into a zip for a ticket, and deletes old reports (typed confirmation).",
     "category": "Diagnostics",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$reportDir = Join-Path $env:USERPROFILE 'Desktop\\MSP-Reports'\n$logDir = if ($ScriptRoot) { Join-Path $ScriptRoot 'logs' } else { $null }\n# Opening files/folders needs a visible desktop (not session 0 / RMM / service context)\n$hasDesktop = (Get-Process -Id $PID).SessionId -ne 0 -and [Environment]::UserInteractive\n\nfunction Show-TextPaged {\n  param([string[]]$Lines, [int]$PageSize = 60)\n  if (-not $Lines.Count) { Write-Host '(empty file)'; return }\n  for ($i = 0; $i -lt $Lines.Count; $i += $PageSize) {\n    $end = [math]::Min($i + $PageSize, $Lines.Count) - 1\n    $Lines[$i..$end] | ForEach-Object { Write-Host $_ }\n    if ($end -lt $Lines.Count - 1) {\n      $more = Read-Host ('-- lines {0}-{1} of {2}: Enter for more, q to stop --' -f ($i + 1), ($end + 1), $Lines.Count)\n      if ($more -match '^[Qq]') { return }\n    }\n  }\n}\n\nwhile ($true) {\n  $files = @()\n  if (Test-Path $reportDir) { $files += @(Get-ChildItem -Path $reportDir -File -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ Source = 'Report'; File = $_ } }) }\n  if ($logDir -and (Test-Path $logDir)) { $files += @(Get-ChildItem -Path $logDir -File -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ Source = 'Log'; File = $_ } }) }\n  $files = @($files | Sort-Object { $_.File.LastWriteTime } -Descending)\n  Write-Host ''\n  if (-not $files.Count) {\n    Write-Host \"No reports found in $reportDir.\" -ForegroundColor Yellow\n    Write-Host 'Run Export System Information or Export Critical Event Logs & Reliability Report first.'\n    return\n  }\n  Write-Host \"--- Reports ($reportDir) ---\"\n  for ($i = 0; $i -lt $files.Count; $i++) {\n    $f = $files[$i].File\n    Write-Host ('  [{0,2}] {1}  {2,-6} {3,8}  {4}' -f ($i + 1), $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm'), $files[$i].Source, ('{0:N1} KB' -f ($f.Length / 1KB)), $f.Name)\n  }\n  Write-Host ''\n  $selection = Read-Host 'Enter a report number to view, O to open the reports folder, or 0 to exit'\n  if (-not $selection -or $selection -eq '0') { Write-Host 'Exiting tool.' -ForegroundColor Yellow; return }\n  if ($selection -match '^[Oo]$') {\n    if ($hasDesktop -and (Test-Path $reportDir)) { Start-Process -FilePath explorer.exe -ArgumentList \"`\"$reportDir`\"\"; Write-Host \"Opened $reportDir\" -ForegroundColor Green }\n    else { Write-Host \"Reports folder: $reportDir\" }\n    continue\n  }\n  if ($selection -notmatch '^\\d+$' -or [int]$selection -lt 1 -or [int]$selection -gt $files.Count) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; continue }\n\n  $f = $files[[int]$selection - 1].File\n  Write-Host ''\n  Write-Host ('=== {0}  ({1:N1} KB, {2}) ===' -f $f.Name, ($f.Length / 1KB), $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm')) -ForegroundColor Cyan\n  try {\n    switch ($f.Extension.ToLowerInvariant()) {\n      { $_ -in '.html', '.htm' } {\n        if ($hasDesktop) { Invoke-Item -LiteralPath $f.FullName; Write-Host 'Opened in your default browser.' -ForegroundColor Green }\n        else { Write-Host \"HTML reports need a desktop to view. File: $($f.FullName)\" -ForegroundColor Yellow }\n        break\n      }\n      '.csv' {\n        $rows = @(Import-Csv -LiteralPath $f.FullName)\n        Write-Host \"$($rows.Count) row(s). Long columns are cut off here - open in Excel for full text.\"\n        if ($rows.Count) { Show-TextPaged -Lines (($rows | Format-Table -AutoSize | Out-String -Width 220) -split \"\\r?\\n\" | Where-Object { $_.Trim() }) }\n        break\n      }\n      default { Show-TextPaged -Lines @(Get-Content -LiteralPath $f.FullName) }\n    }\n  } catch {\n    Write-Host \"Could not read $($f.Name): $($_.Exception.Message)\" -ForegroundColor Red\n    continue\n  }\n  if ($hasDesktop -and $f.Extension -notin '.html', '.htm') {\n    $open = Read-Host 'Open this file in its default app? (y/N)'\n    if ($open -match '^[Yy]') { Invoke-Item -LiteralPath $f.FullName; Write-Host 'Opened.' -ForegroundColor Green }\n  }\n}"
-    ]
+    "Script": "tools/MspDiagReportView.ps1"
+  },
+  "MspDiagAgentHealth": {
+    "Content": "Agent Health Check",
+    "Description": "Checks the CWA, ScreenConnect, ImmyBot, Defender and third-party EDR/AV agents are installed and running (status, start type, version, CWA check-in details) and offers to restart a stopped or disabled agent service (admin).",
+    "category": "Diagnostics",
+    "RequiresAdmin": false,
+    "Script": "tools/MspDiagAgentHealth.ps1"
+  },
+  "MspDiagPendingReboot": {
+    "Content": "Pending Reboot Check",
+    "Description": "Checks the standard pending-reboot indicators (CBS, Windows Update, pending file renames, computer rename, domain join, ConfigMgr), shows last boot time and uptime, and offers a restart only when one is pending.",
+    "category": "Diagnostics",
+    "RequiresAdmin": false,
+    "Script": "tools/MspDiagPendingReboot.ps1"
+  },
+  "MspDiagShutdownHistory": {
+    "Content": "Unexpected Shutdown History",
+    "Description": "30-day timeline of unexpected shutdowns, dirty reboots (Kernel-Power 41), BSODs (with bugcheck code), user/process restarts and clean boots, with counts per type, a warning above 2 incidents, and optional CSV export.",
+    "category": "Diagnostics",
+    "RequiresAdmin": false,
+    "Script": "tools/MspDiagShutdownHistory.ps1"
+  },
+  "MspDiagBatteryReport": {
+    "Content": "Battery Report",
+    "Description": "Shows battery charge, estimated runtime, design vs full-charge capacity (health %, flagged below 60%) and cycle count, and saves the Windows battery report (powercfg /batteryreport) as HTML.",
+    "category": "Diagnostics",
+    "RequiresAdmin": false,
+    "Script": "tools/MspDiagBatteryReport.ps1"
+  },
+  "MspDiagM365Health": {
+    "Content": "Microsoft 365 Health",
+    "Description": "Read-only check of Microsoft 365 Apps: version, update channel, last update result, products, licensing and signed-in accounts, Outlook profiles and OST/PST sizes (flags large files), and classic vs new Teams.",
+    "category": "Diagnostics",
+    "RequiresAdmin": false,
+    "Script": "tools/MspDiagM365Health.ps1"
+  },
+  "MspDiagTicketBundle": {
+    "Content": "Ticket Bundle",
+    "Description": "Zips recent MSP-Reports files (default last 24 hours, 0 = all) and MSP Tool logs with a summary.txt into Desktop\\MSP-Reports\\ticket-<COMPUTER>-<date>.zip, ready to attach to a ConnectWise ticket.",
+    "category": "Diagnostics",
+    "RequiresAdmin": false,
+    "Script": "tools/MspDiagTicketBundle.ps1"
   },
   "MspMaintTempCleanup": {
     "Content": "Clear Temp Files",
-    "Description": "Removes user and system temp files older than 7 days, plus Delivery Optimization cache.",
+    "Description": "Removes temp and cache files older than 7 days (Windows Temp, all users' Temp, Delivery Optimization, Chrome/Edge/Firefox cache folders - never cookies, history or passwords), shows a per-folder summary, and reports the size of C:\\Windows.old.",
     "category": "Maintenance",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "$tempfolders = @(\"C:\\Windows\\Temp\\*\", \"C:\\Windows\\Prefetch\\*\", \"C:\\Documents and Settings\\*\\Local Settings\\temp\\*\", \"C:\\Users\\*\\Appdata\\Local\\Temp\\*\")\n$doPath = Join-Path $env:ProgramData 'Microsoft\\Windows\\DeliveryOptimization\\Cache\\*'\n$targets = @($tempfolders + $doPath)\nWrite-Host 'Cleaning paths:'\nWrite-Host ''\nforeach ($target in $targets) {\n  Write-Host \"PATH: $target\" -ForegroundColor Cyan\n  $files = Get-ChildItem $target -Force -Recurse -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }\n  $removedBytes = 0\n  $removedCount = 0\n  foreach ($file in $files) {\n    Write-Host \"  FILE: $($file.FullName)\"\n    try {\n      $removedBytes += $file.Length\n      $removedCount++\n      Remove-Item $file.FullName -Force -Recurse -ErrorAction Stop\n    } catch {\n      Write-Host \"  FAILED TO REMOVE: $($file.FullName) - $($_.Exception.Message)\" -ForegroundColor Red\n    }\n  }\n  Write-Host \"  Removed: $removedCount file(s), $([math]::Round($removedBytes/1MB,2)) MB\" -ForegroundColor Green\n  Write-Host ''\n}"
-    ]
+    "Script": "tools/MspMaintTempCleanup.ps1"
   },
   "MspMaintDiskCleanup": {
     "Content": "Run Disk Cleanup",
     "Description": "Launches cleanmgr for system drive (silent preset where supported).",
     "category": "Maintenance",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "Write-Host 'Running Disk Cleanup...'\ncleanmgr /sagerun:1 2>$null\nif ($LASTEXITCODE -ne 0) {\n  Write-Host 'Launching interactive Disk Cleanup...'\n  cleanmgr /d C:\n}\nWrite-Host 'Disk Cleanup initiated'"
-    ]
+    "Script": "tools/MspMaintDiskCleanup.ps1"
   },
   "MspMaintOptimize": {
     "Content": "Optimize Drives",
     "Description": "Runs defrag/optimize on all fixed drives.",
     "category": "Maintenance",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveType -eq 'Fixed' } | ForEach-Object {\n  Write-Host \"Optimizing drive $($_.DriveLetter):...\"\n  Optimize-Volume -DriveLetter $_.DriveLetter -ReTrim -Verbose\n}\nWrite-Host 'Drive optimization complete'"
-    ]
+    "Script": "tools/MspMaintOptimize.ps1"
   },
   "MspMaintWindowsUpdate": {
     "Content": "Check Windows Update Status",
     "Description": "Lists pending and recently installed updates.",
     "category": "Maintenance",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "if (-not (Get-Module -ListAvailable PSWindowsUpdate)) {\n  Write-Host 'PSWindowsUpdate module not installed. Installing from PowerShell Gallery...'\n  try {\n    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12\n    if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) { Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null }\n    Install-Module PSWindowsUpdate -Force -Scope CurrentUser -ErrorAction Stop\n    Write-Host 'PSWindowsUpdate installed successfully.' -ForegroundColor Green\n  } catch { Write-Host \"Failed to install PSWindowsUpdate: $($_.Exception.Message)\" -ForegroundColor Red; return }\n}\nImport-Module PSWindowsUpdate -ErrorAction SilentlyContinue\nGet-WindowsUpdate -IsInstalled:$false -ErrorAction SilentlyContinue | Select-Object Title, Size, IsDownloaded | Format-Table -AutoSize | Out-String | Write-Host"
-    ]
+    "Script": "tools/MspMaintWindowsUpdate.ps1"
   },
   "MspSecDefenderScan": {
     "Content": "Windows Defender Quick Scan",
     "Description": "Starts a quick malware scan with Microsoft Defender.",
     "category": "Security",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "Write-Host 'Starting Defender quick scan...'\nStart-MpScan -ScanType QuickScan\nWrite-Host 'Defender scan started (check Security Center for results)'"
-    ]
+    "Script": "tools/MspSecDefenderScan.ps1"
   },
   "MspSecDefenderStatus": {
     "Content": "Defender Status Report",
-    "Description": "Shows real-time protection, signature age, and last scan time.",
+    "Description": "Shows real-time and tamper protection, signature age, engine/platform versions, threat detections from the last 30 days, and exclusions (risky ones flagged).",
     "category": "Security",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "Get-MpComputerStatus | Select-Object AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, AntivirusSignatureLastUpdated, QuickScanEndTime, FullScanEndTime | Format-List | Out-String | Write-Host"
-    ]
+    "Script": "tools/MspSecDefenderStatus.ps1"
   },
   "MspSecFirewall": {
     "Content": "Firewall Profile Status",
     "Description": "Reports firewall state for Domain, Private, and Public profiles.",
     "category": "Security",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction | Format-Table -AutoSize | Out-String | Write-Host"
-    ]
+    "Script": "tools/MspSecFirewall.ps1"
   },
   "MspSecBitLocker": {
     "Content": "BitLocker Status",
-    "Description": "Reports encryption status for all fixed drives.",
+    "Description": "Reports encryption status, method and protector types for all fixed drives, and whether the OS drive recovery key was backed up (Entra ID/AD/Microsoft account). Never shows recovery passwords.",
     "category": "Security",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "Get-BitLockerVolume | Select-Object MountPoint, VolumeStatus, EncryptionPercentage, ProtectionStatus | Format-Table -AutoSize | Out-String | Write-Host\n$kp = (Get-BitLockerVolume -MountPoint 'C').KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }\nif ($kp) {\n  Write-Host ''\n  Write-Host 'Recovery Password Protector(s) for C:'\n  $kp | Select-Object KeyProtectorId, KeyProtectorType | Format-List | Out-String | Write-Host\n  Write-Host 'Recovery password not shown - tool output is saved to the MSP Tool log and transcript.'\n  Write-Host 'To view it, check AD/Entra ID/your RMM, or run in a separate (unlogged) elevated session:'\n  Write-Host '  manage-bde -protectors -get C: -Type RecoveryPassword'\n} else {\n  Write-Host ''\n  Write-Host 'No RecoveryPassword protector found on C:'\n}"
-    ]
+    "Script": "tools/MspSecBitLocker.ps1"
   },
   "MspSecLocalAdmins": {
     "Content": "Audit Local Administrators",
-    "Description": "Lists local Administrators group members and can reset a selected local account password.",
+    "Description": "Lists local Administrators members, flags ones not on the allow-list, shows whether the built-in Administrator is enabled and Windows/legacy LAPS status, and can reset a selected local account password.",
     "category": "Security",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "$admins = Get-LocalGroupMember -Group 'Administrators' -ErrorAction SilentlyContinue\nif (-not $admins) {\n  net localgroup Administrators\n  return\n}\n$admins = @($admins)\n$localAdmins = @($admins | Where-Object { $_.ObjectClass -eq 'User' -and $_.PrincipalSource -eq 'Local' })\n$admins | Select-Object Name, ObjectClass, PrincipalSource | Format-Table -AutoSize | Out-String | Write-Host\nWrite-Host ''\n$answer = Read-Host 'Do you want to reset the password for one of these local administrator accounts? (y/N)'\nif ($answer -notmatch '^[Yy]') { return }\nif (-not $localAdmins) { Write-Host 'No local user accounts were found in the Administrators group.' -ForegroundColor Yellow; return }\nWrite-Host ''\nfor ($i = 0; $i -lt $localAdmins.Count; $i++) {\n  Write-Host (\"  [{0}] {1}\" -f ($i + 1), $localAdmins[$i].Name)\n}\nWrite-Host ''\n$choice = Read-Host 'Select the account number to reset'\nif (-not $choice) { Write-Host 'Cancelled.' -ForegroundColor Yellow; return }\n$index = [int]$choice - 1\nif ($index -lt 0 -or $index -ge $localAdmins.Count) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; return }\n$userName = $localAdmins[$index].Name\n$secure = Read-Host (\"Enter new password for {0}\" -f $userName) -AsSecureString\nif (-not $secure) { Write-Host 'No password entered. Cancelled.' -ForegroundColor Yellow; return }\ntry {\n  $plain = [System.Net.NetworkCredential]::new('', $secure).Password\n  $newSecure = ConvertTo-SecureString $plain -AsPlainText -Force\n  Set-LocalUser -Name $userName -Password $newSecure -ErrorAction Stop\n  Write-Host (\"Password updated for {0}\" -f $userName) -ForegroundColor Green\n} catch {\n  Write-Host (\"Failed to update password for {0}: {1}\" -f $userName, $_.Exception.Message) -ForegroundColor Red\n}"
-    ]
+    "Script": "tools/MspSecLocalAdmins.ps1"
+  },
+  "MspSecBaseline": {
+    "Content": "Security Baseline Scorecard",
+    "Description": "Read-only scorecard: SMBv1, RDP/NLA, UAC, Guest, AutoRun, Secure Boot, TPM, BitLocker, firewall, Defender, PowerShell v2, LLMNR, password/lockout policy, local admins, OS support, LSA protection, Credential Guard - PASS/WARN/FAIL with fix hints and an HTML copy.",
+    "category": "Security",
+    "RequiresAdmin": false,
+    "Script": "tools/MspSecBaseline.ps1"
+  },
+  "MspSecRemoteAccessAudit": {
+    "Content": "Remote Access Software Audit",
+    "Description": "Read-only scan of installed programs, services, processes and listening ports for remote-access/RMM tools (AnyDesk, TeamViewer, RustDesk, Splashtop, VNC, other RMMs, extra ScreenConnect instances), marked APPROVED or UNAPPROVED.",
+    "category": "Security",
+    "RequiresAdmin": false,
+    "Script": "tools/MspSecRemoteAccessAudit.ps1"
+  },
+  "MspSecFailedLogons": {
+    "Content": "Failed Logons & Lockouts",
+    "Description": "Reviews the Security log (1/24/168 hours): failed logons by account, source, logon type and reason, account lockouts, and successful RDP logons; flags brute-force and password-spray patterns. Optional CSV export.",
+    "category": "Security",
+    "RequiresAdmin": true,
+    "Script": "tools/MspSecFailedLogons.ps1"
   },
   "MspRepairSFC": {
     "Content": "System File Checker (SFC)",
     "Description": "Scans and repairs protected system files. May take 15-30 minutes.",
     "category": "Repair",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "Write-Host 'Running sfc /scannow - this may take a while...'\nsfc /scannow\nWrite-Host \"SFC exit code: $LASTEXITCODE\""
-    ]
+    "Script": "tools/MspRepairSFC.ps1"
   },
   "MspRepairDISM": {
     "Content": "DISM Health Restore",
     "Description": "Repairs the Windows component store. Run before SFC if issues persist.",
     "category": "Repair",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "Write-Host 'Running DISM RestoreHealth - this may take a while...'\nDISM /Online /Cleanup-Image /RestoreHealth\nWrite-Host \"DISM exit code: $LASTEXITCODE\""
-    ]
+    "Script": "tools/MspRepairDISM.ps1"
   },
   "MspRepairNetworkReset": {
     "Content": "Reset Network Stack",
     "Description": "Resets Winsock and IP stack. Requires reboot.",
     "category": "Repair",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "Write-Host 'Resetting network stack...'\nnetsh winsock reset\nnetsh int ip reset\nWrite-Host 'Network stack reset. A reboot is recommended.'"
-    ]
+    "Script": "tools/MspRepairNetworkReset.ps1"
   },
   "MspRepairSearchIndex": {
     "Content": "Rebuild Search Index",
     "Description": "Restarts Windows Search and triggers index rebuild.",
     "category": "Repair",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "Stop-Service WSearch -Force -ErrorAction SilentlyContinue\nStart-Sleep -Seconds 2\nStart-Service WSearch\nWrite-Host 'Search service restarted. Index will rebuild in background.'"
-    ]
+    "Script": "tools/MspRepairSearchIndex.ps1"
+  },
+  "MspRepairWindowsUpdateReset": {
+    "Content": "Reset Windows Update Components",
+    "Description": "Shows Windows Update service state and cache sizes, then (typed YES) stops the update services, renames SoftwareDistribution and catroot2 to .old-<date> (never deletes) and always restarts the services. Restart recommended.",
+    "category": "Repair",
+    "RequiresAdmin": true,
+    "Script": "tools/MspRepairWindowsUpdateReset.ps1"
+  },
+  "MspRepairPrinter": {
+    "Content": "Printer Troubleshooter",
+    "Description": "Lists printers, queues, stuck jobs and Spooler status; clear stuck jobs, clear all jobs, restart the spooler, print a test page or set the default printer. Spooler actions need admin.",
+    "category": "Repair",
+    "RequiresAdmin": false,
+    "Script": "tools/MspRepairPrinter.ps1"
+  },
+  "MspRepairQuickNetwork": {
+    "Content": "Quick Network Fix",
+    "Description": "Lighter than Reset Network Stack: flush DNS, release/renew DHCP and register DNS (admin), then re-test gateway, DNS and HTTPS. No restart needed.",
+    "category": "Repair",
+    "RequiresAdmin": false,
+    "Script": "tools/MspRepairQuickNetwork.ps1"
+  },
+  "MspRepairOfficeCache": {
+    "Content": "Clear Teams / Outlook Cache",
+    "Description": "Current user only: shows classic/new Teams and Outlook cache sizes (OST/PST never touched), closes the apps on request and clears the caches so they rebuild. Won't run as SYSTEM.",
+    "category": "Repair",
+    "RequiresAdmin": false,
+    "Script": "tools/MspRepairOfficeCache.ps1"
+  },
+  "MspRepairOneDriveReset": {
+    "Content": "OneDrive Reset",
+    "Description": "Current user only: shows OneDrive state and signed-in accounts, then restarts OneDrive or runs a full reset (typed YES; files are not deleted, sync re-scans). Won't run as SYSTEM.",
+    "category": "Repair",
+    "RequiresAdmin": false,
+    "Script": "tools/MspRepairOneDriveReset.ps1"
   },
   "MspSetupRestorePoint": {
     "Content": "Create Restore Point",
     "Description": "Creates a system restore point before making changes.",
     "category": "Setup",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "Checkpoint-Computer -Description 'MSP Tool - Pre-change snapshot' -RestorePointType MODIFY_SETTINGS\nWrite-Host 'Restore point created'"
-    ]
+    "Script": "tools/MspSetupRestorePoint.ps1"
   },
   "MspSetupPowerPlan": {
     "Content": "Set Balanced Power Plan",
     "Description": "Activates the Balanced power scheme.",
     "category": "Setup",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e\nWrite-Host 'Balanced power plan activated'"
-    ]
+    "Script": "tools/MspSetupPowerPlan.ps1"
   },
   "MspSetupTimeSync": {
     "Content": "Force Time Sync",
     "Description": "Restarts Windows Time service and forces NTP sync.",
     "category": "Setup",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "Stop-Service w32time -Force -ErrorAction SilentlyContinue\nStart-Service w32time\nw32tm /resync /force\nWrite-Host 'Time sync completed'"
-    ]
+    "Script": "tools/MspSetupTimeSync.ps1"
   },
   "MspSetupRdpEnable": {
     "Content": "Enable Remote Desktop",
     "Description": "Enables RDP and configures firewall rule for remote access.",
     "category": "Setup",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0\nEnable-NetFirewallRule -DisplayGroup 'Remote Desktop'\nWrite-Host 'Remote Desktop enabled'"
-    ]
+    "Script": "tools/MspSetupRdpEnable.ps1"
   },
   "MspSetupHostname": {
     "Content": "Show Computer Identity",
     "Description": "Displays hostname, domain/workgroup, and serial number.",
     "category": "Setup",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$cs = Get-CimInstance Win32_ComputerSystem\n$bios = Get-CimInstance Win32_BIOS\nWrite-Host \"Hostname: $($cs.Name)\"\nWrite-Host \"Domain/Workgroup: $($cs.Domain)\"\nWrite-Host \"Manufacturer: $($cs.Manufacturer)\"\nWrite-Host \"Model: $($cs.Model)\"\nWrite-Host \"Serial: $($bios.SerialNumber)\""
-    ]
+    "Script": "tools/MspSetupHostname.ps1"
+  },
+  "MspSetupWorkstationBaseline": {
+    "Content": "New Workstation Baseline",
+    "Description": "Shows current name, serial, time zone, power plan and apps, then lets you rename the computer, set time zone and power plan, remove consumer apps and install baseline apps via winget - each step confirmed. Settings in config\\baseline.json.",
+    "category": "Setup",
+    "RequiresAdmin": true,
+    "Script": "tools/MspSetupWorkstationBaseline.ps1"
   },
   "MspDomainStatus": {
     "Content": "Domain Join Status",
@@ -212,27 +271,21 @@
     "category": "Domain",
     "Order": 1,
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$cs = Get-CimInstance Win32_ComputerSystem\nWrite-Host \"Computer Name : $env:COMPUTERNAME\"\nif ($cs.PartOfDomain) {\n  Write-Host \"Domain Joined : YES\" -ForegroundColor Green\n  Write-Host \"Domain        : $($cs.Domain)\" -ForegroundColor Green\n  try {\n    if (Test-ComputerSecureChannel) { Write-Host 'Secure Channel: HEALTHY' -ForegroundColor Green }\n    else { Write-Host 'Secure Channel: BROKEN - run repair tool or rejoin' -ForegroundColor Red }\n  } catch { Write-Host \"Secure Channel: ERROR - $($_.Exception.Message)\" -ForegroundColor Red }\n} else {\n  Write-Host \"Domain Joined : NO\" -ForegroundColor Yellow\n  Write-Host \"Workgroup     : $($cs.Domain)\" -ForegroundColor Yellow\n}"
-    ]
+    "Script": "tools/MspDomainStatus.ps1"
   },
   "MspDomainConnectivity": {
     "Content": "Domain Connectivity Test",
     "Description": "Tests DNS resolution, DC discovery, and LDAP port 389 reachability for a domain.",
     "category": "Domain",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$domain = $null\n$cs = Get-CimInstance Win32_ComputerSystem\nif ($cs.PartOfDomain) { $domain = $cs.Domain }\nif (-not $domain) { $domain = $env:USERDNSDOMAIN }\nif ($domain) {\n  $answer = Read-Host \"Enter target domain FQDN, or press Enter to use suggested '$domain'\"\n  if ($answer) { $domain = $answer }\n} else {\n  $domain = Read-Host 'Enter target domain FQDN (e.g. corp.contoso.com)'\n}\nif (-not $domain) { Write-Host 'No domain entered - aborted.' -ForegroundColor Yellow; return }\ntry {\n  $ips = [System.Net.Dns]::GetHostAddresses($domain) | Where-Object AddressFamily -eq 'InterNetwork'\n  if (-not $ips) { throw 'no A records' }\n  Write-Host \"[OK] DNS      : $domain -> $($ips[0].IPAddressToString)\" -ForegroundColor Green\n} catch {\n  Write-Host \"[FAIL] DNS    : cannot resolve '$domain'.\" -ForegroundColor Red\n}\ntry {\n  $ctx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext([System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain)\n  $ad = [System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($ctx)\n  $dc = $ad.DomainControllers | Select-Object -First 1\n  Write-Host \"[OK] DC found : $($dc.Name)\" -ForegroundColor Green\n  $tcp = New-Object System.Net.Sockets.TcpClient\n  if (-not $tcp.ConnectAsync($dc.IPAddress, 389).Wait(5000)) { throw \"LDAP timeout on $($dc.IPAddress)\" }\n  $tcp.Close()\n  Write-Host \"[OK] LDAP     : $($dc.IPAddress):389 reachable\" -ForegroundColor Green\n  Write-Host ''\n  Write-Host \"SUCCESS: Workstation can reach domain '$domain'.\" -ForegroundColor Green\n} catch {\n  Write-Host \"[FAIL] AD/LDAP : $($_.Exception.Message)\" -ForegroundColor Red\n  $vpns = @()\n  try { $vpns = Get-VpnConnection -AllUserConnection -ErrorAction SilentlyContinue } catch { }\n  try { $vpns += Get-VpnConnection -ErrorAction SilentlyContinue } catch { }\n  $vpns = @($vpns | Sort-Object Name -Unique)\n  if ($vpns.Count) {\n    Write-Host ''\n    Write-Host 'VPN connections found on this workstation:' -ForegroundColor Yellow\n    for ($i = 0; $i -lt $vpns.Count; $i++) { Write-Host (\"  [{0}] {1} ({2})\" -f ($i + 1), $vpns[$i].Name, $vpns[$i].ConnectionStatus) }\n    $choice = Read-Host 'Enter VPN number to start, or press Enter to skip'\n    if ($choice) {\n      $idx = [int]$choice - 1\n      if ($idx -ge 0 -and $idx -lt $vpns.Count) {\n        $vpnName = $vpns[$idx].Name\n        try {\n          if ($vpns[$idx].PSTypeNames -match 'AllUser') { rasdial \"$vpnName\" } else { Start-VpnConnection -Name $vpnName -PassThru -ErrorAction Stop | Out-Null }\n          Write-Host \"[OK] VPN started: $vpnName\" -ForegroundColor Green\n          $run = Read-Host 'Run Domain Connectivity Test again now? (Y/n)'\n          if ($run -notmatch '^[Nn]') { & $MyInvocation.MyCommand.ScriptBlock }\n        } catch { Write-Host \"[FAIL] VPN start failed: $($_.Exception.Message)\" -ForegroundColor Red }\n      }\n    }\n  } else { Write-Host 'No VPN connections found on this workstation.' -ForegroundColor Yellow }\n}"
-    ]
+    "Script": "tools/MspDomainConnectivity.ps1"
   },
   "MspVpnStart": {
     "Content": "Start VPN Connection",
     "Description": "Lists VPN connections found on the workstation, starts the selected one, then offers to rerun domain connectivity.",
     "category": "Domain",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$vpns = @()\ntry { $vpns = Get-VpnConnection -AllUserConnection -ErrorAction SilentlyContinue } catch { }\ntry { $vpns += Get-VpnConnection -ErrorAction SilentlyContinue } catch { }\n$vpns = @($vpns | Sort-Object Name -Unique)\nif (-not $vpns.Count) { Write-Host 'No VPN connections found on this workstation.' -ForegroundColor Yellow; return }\nWrite-Host 'VPN connections found:'\nfor ($i = 0; $i -lt $vpns.Count; $i++) { Write-Host (\"  [{0}] {1} ({2})\" -f ($i + 1), $vpns[$i].Name, $vpns[$i].ConnectionStatus) }\n$choice = Read-Host 'Enter VPN number to start'\nif (-not $choice) { Write-Host 'Cancelled.' -ForegroundColor Yellow; return }\n$idx = [int]$choice - 1\nif ($idx -lt 0 -or $idx -ge $vpns.Count) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; return }\n$vpnName = $vpns[$idx].Name\ntry {\n  if ($vpns[$idx].PSTypeNames -match 'AllUser') {\n    rasdial \"$vpnName\"\n  } else {\n    Start-VpnConnection -Name $vpnName -PassThru -ErrorAction Stop | Out-Null\n  }\n  Write-Host \"[OK] VPN started: $vpnName\" -ForegroundColor Green\n  $run = Read-Host 'Run Domain Connectivity Test now? (Y/n)'\n  if ($run -notmatch '^[Nn]') { Write-Host 'Run the Domain Connectivity Test tool next.' -ForegroundColor Yellow }\n} catch {\n  Write-Host \"[FAIL] VPN start failed: $($_.Exception.Message)\" -ForegroundColor Red\n}"
-    ]
+    "Script": "tools/MspVpnStart.ps1"
   },
   "MspDomainCredentialTest": {
     "Content": "Test Domain Join Credential",
@@ -240,9 +293,7 @@
     "category": "Domain",
     "Order": 5,
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$domain = Read-Host 'Enter target domain FQDN (e.g. corp.contoso.com)'\nif (-not $domain) { Write-Host 'No domain entered - aborted.' -ForegroundColor Yellow; return }\n$cred = Get-Credential -Message \"Enter the account you want to test against $domain\"\nif (-not $cred) { Write-Host 'Credentials required - aborted.' -ForegroundColor Yellow; return }\ntry {\n  $ctx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext([System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain, $cred.UserName, $cred.GetNetworkCredential().Password)\n  $ad = [System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($ctx)\n  Write-Host \"SUCCESS: Credential validated for domain '$($ad.Name)'.\" -ForegroundColor Green\n} catch {\n  Write-Host \"FAILED: Credential did not validate for domain '$domain'. $($_.Exception.Message)\" -ForegroundColor Red\n}"
-    ]
+    "Script": "tools/MspDomainCredentialTest.ps1"
   },
   "MspVpnChecker": {
     "Content": "VPN Checker",
@@ -250,9 +301,7 @@
     "category": "Domain",
     "Order": 3,
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$vpns = @()\ntry { $vpns += Get-VpnConnection -AllUserConnection -ErrorAction SilentlyContinue } catch { }\ntry { $vpns += Get-VpnConnection -ErrorAction SilentlyContinue } catch { }\n$vpns = @($vpns | Sort-Object Name -Unique)\nif (-not $vpns.Count) { Write-Host 'No VPN connections found on this workstation.' -ForegroundColor Yellow; return }\nWrite-Host 'Visible VPN connections:'\nfor ($i = 0; $i -lt $vpns.Count; $i++) {\n  $state = if ($vpns[$i].ConnectionStatus) { $vpns[$i].ConnectionStatus } else { 'Unknown' }\n  Write-Host (\"  [{0}] {1} ({2})\" -f ($i + 1), $vpns[$i].Name, $state)\n}\nWrite-Host ''\n$choice = Read-Host 'Enter VPN number to start'\nif (-not $choice) { Write-Host 'Cancelled.' -ForegroundColor Yellow; return }\n$idx = [int]$choice - 1\nif ($idx -lt 0 -or $idx -ge $vpns.Count) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; return }\n$vpnName = $vpns[$idx].Name\ntry {\n  $current = $vpns[$idx].ConnectionStatus\n  if ($current -eq 'Connected') {\n    Write-Host \"[OK] VPN already connected: $vpnName\" -ForegroundColor Green\n    return\n  }\n  rasdial \"$vpnName\"\n  Write-Host \"[OK] VPN start command sent: $vpnName\" -ForegroundColor Green\n} catch {\n  Write-Host \"[FAIL] VPN start failed: $($_.Exception.Message)\" -ForegroundColor Red\n}"
-    ]
+    "Script": "tools/MspVpnChecker.ps1"
   },
   "MspDomainGpUpdate": {
     "Content": "Force Group Policy Update",
@@ -260,9 +309,7 @@
     "category": "Domain",
     "Order": 9,
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "Write-Host 'Running gpupdate /force...'\ngpupdate /force\nWrite-Host ''\nWrite-Host 'Applied Group Policy results:'\ntry {\n  gpresult /r\n} catch {\n  Write-Host \"gpresult failed: $($_.Exception.Message)\" -ForegroundColor Red\n}"
-    ]
+    "Script": "tools/MspDomainGpUpdate.ps1"
   },
   "MspDomainJoin": {
     "Content": "Join Workstation to Domain",
@@ -270,9 +317,7 @@
     "category": "Domain",
     "Order": 8,
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "$cs = Get-CimInstance Win32_ComputerSystem\nif ($cs.PartOfDomain) { Write-Host \"Already joined to '$($cs.Domain)'. Nothing to do.\" -ForegroundColor Yellow; return }\n$domain = Read-Host 'Enter target domain FQDN (e.g. corp.contoso.com)'\nif (-not $domain) { Write-Host 'No domain entered - aborted.' -ForegroundColor Yellow; return }\ntry {\n  $ctx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext([System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain)\n  [void][System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($ctx)\n  Write-Host \"[OK] Domain reachable: $domain\" -ForegroundColor Green\n} catch { Write-Host \"Cannot reach domain '$domain': $($_.Exception.Message)\" -ForegroundColor Red; return }\n$cred = Get-Credential -Message \"Account with rights to join $domain\"\nif (-not $cred) { Write-Host 'Credentials required - aborted.' -ForegroundColor Yellow; return }\n$ou = Read-Host 'Target OU path (optional, press Enter to skip, e.g. OU=Workstations,DC=corp,DC=contoso,DC=com)'\n$params = @{ DomainName = $domain; Credential = $cred; Force = $true; ErrorAction = 'Stop' }\nif ($ou) { $params['OU'] = $ou }\ntry {\n  Add-Computer @params\n  Write-Host \"SUCCESS: Joined domain '$domain'. A restart is required to finish.\" -ForegroundColor Green\n  $r = Read-Host 'Restart now? (Y/n)'\n  if ($r -notmatch '^n') { Restart-Computer -Force } else { Write-Host 'Reboot later to complete the join.' -ForegroundColor Yellow }\n} catch { Write-Host \"FAILED to join domain: $($_.Exception.Message)\" -ForegroundColor Red }"
-    ]
+    "Script": "tools/MspDomainJoin.ps1"
   },
   "MspDomainUnjoin": {
     "Content": "Remove Workstation from Domain",
@@ -280,9 +325,7 @@
     "category": "Domain",
     "Order": 7,
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "$cs = Get-CimInstance Win32_ComputerSystem\nif (-not $cs.PartOfDomain) { Write-Host 'Workstation is not domain joined.' -ForegroundColor Yellow; return }\nWrite-Host \"Current domain: $($cs.Domain)\"\n$confirm = Read-Host 'Type YES to remove this workstation from the domain'\nif ($confirm -ne 'YES') { Write-Host 'Cancelled.' -ForegroundColor Yellow; return }\n$workgroup = Read-Host 'Enter workgroup name to join (default: WORKGROUP)'\nif (-not $workgroup) { $workgroup = 'WORKGROUP' }\n$cred = Get-Credential -Message 'Enter domain account with rights to remove this computer from the domain'\nif (-not $cred) { Write-Host 'Credentials required - aborted.' -ForegroundColor Yellow; return }\n$stageOnly = Read-Host 'Stage the unjoin without restarting now? (Y/n)'\ntry {\n  Remove-Computer -UnjoinDomainCredential $cred -WorkgroupName $workgroup -Force -ErrorAction Stop\n  Write-Host \"SUCCESS: Removed from domain and joined workgroup '$workgroup'. Restart is required.\" -ForegroundColor Green\n  if ($stageOnly -match '^[Yy]') {\n    Write-Host 'Unjoin staged. Reboot later to complete the change.' -ForegroundColor Yellow\n    return\n  }\n  $r = Read-Host 'Restart now? (Y/n)'\n  if ($r -notmatch '^n') { Restart-Computer -Force } else { Write-Host 'Reboot later to complete the unjoin.' -ForegroundColor Yellow }\n} catch {\n  Write-Host \"FAILED to remove workstation from domain: $($_.Exception.Message)\" -ForegroundColor Red\n}"
-    ]
+    "Script": "tools/MspDomainUnjoin.ps1"
   },
   "MspDomainSecureRepair": {
     "Content": "Repair Domain Secure Channel",
@@ -290,107 +333,91 @@
     "category": "Domain",
     "Order": 6,
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "$cs = Get-CimInstance Win32_ComputerSystem\nif (-not $cs.PartOfDomain) { Write-Host 'Workstation is not domain joined.' -ForegroundColor Yellow; return }\nWrite-Host \"Testing secure channel for domain '$($cs.Domain)'...\"\nif (Test-ComputerSecureChannel) {\n  Write-Host 'Secure channel is HEALTHY - no repair needed.' -ForegroundColor Green\n} else {\n  Write-Host 'Secure channel is BROKEN - repairing...' -ForegroundColor Yellow\n  if (Test-ComputerSecureChannel -Repair) {\n    Write-Host 'Secure channel repaired successfully.' -ForegroundColor Green\n    $r = Read-Host 'Restart now? (Y/n)'\n    if ($r -notmatch '^n') { Restart-Computer -Force }\n  } else {\n    Write-Host 'Repair failed - leave and rejoin the domain instead.' -ForegroundColor Red\n  }\n}"
-    ]
+    "Script": "tools/MspDomainSecureRepair.ps1"
+  },
+  "MspDomainEntraStatus": {
+    "Content": "Entra ID / Intune Join Status",
+    "Description": "Summarises dsregcmd /status (Entra/hybrid/domain join, tenant, device certificate, PRT, Windows Hello, MDM) plus Intune enrollment, with a verdict, common-problem hints and an option to save the raw output.",
+    "category": "Domain",
+    "Order": 2,
+    "RequiresAdmin": false,
+    "Script": "tools/MspDomainEntraStatus.ps1"
   },
   "MspPerfSpecCheck": {
     "Content": "LENET Spec Recommendation Check",
     "Description": "Evaluates SSD/HDD, RAM, CPU, and workstation age against LENET Techno Stack V3.0 recommendations.",
     "category": "Performance",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$issues = @()\n$warnings = @()\nWrite-Host '=== LENET Spec Recommendation Check ==='\nWrite-Host 'Reference: LENET - TECHNO STACK - V3.0'\nWrite-Host ''\n\n# Storage\nWrite-Host '--- Storage (SSD required since 2021) ---'\ntry {\n  $disks = Get-PhysicalDisk -ErrorAction Stop\n  foreach ($d in $disks) {\n    $model = $d.FriendlyName\n    $media = $d.MediaType\n    $status = 'OK'\n    if ($media -eq 'HDD') { $status = 'BAD - HDD is a performance bottleneck'; $issues += \"HDD detected: $model\" }\n    elseif ($media -eq 'Unspecified' -or $media -eq 'Unknown') {\n      if ($model -match 'SSD|NVMe|Solid') { $status = 'OK (model suggests SSD)' }\n      elseif ($model -match 'ST[0-9]|WDC WD|Hitachi|TOSHIBA.*DT|HGST') { $status = 'BAD - Model suggests HDD'; $issues += \"Possible HDD: $model\" }\n      else { $status = 'CHECK - Verify in CWA Storage tile'; $warnings += \"Media type '$media' for $model - confirm in CWA\" }\n    }\n    else { $status = 'OK' }\n    Write-Host \"  [$status] $model ($media)\"\n  }\n} catch {\n  Get-CimInstance Win32_DiskDrive | ForEach-Object {\n    $m = $_.Model\n    if ($m -match 'SSD|NVMe') { Write-Host \"  [OK] $m\" } else { Write-Host \"  [CHECK] $m - verify SSD in CWA\"; $warnings += $m }\n  }\n}\n\n# RAM\nWrite-Host ''\nWrite-Host '--- RAM ---'\n$ramGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)\nif ($ramGb -lt 8) { Write-Host \"  [BAD] ${ramGb} GB (< 8 GB minimum)\"; $issues += \"RAM ${ramGb} GB below 8 GB minimum\" }\nelseif ($ramGb -le 16) { Write-Host \"  [OK] ${ramGb} GB (>= 8 GB, good for standard users)\" }\nelse { Write-Host \"  [VERY GOOD] ${ramGb} GB (> 16 GB)\" }\n\n# CPU\nWrite-Host ''\nWrite-Host '--- CPU ---'\n$cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1)\nWrite-Host \"  CPU: $($cpu.Name)\"\nWrite-Host '  Action: Search at https://www.cpubenchmark.net/cpu_list.php'\nWrite-Host '  Score < 4000 = bad | > 4000 = okay | > 5000 = very good'\n\n# Workstation age\nWrite-Host ''\nWrite-Host '--- Workstation Age ---'\n$os = Get-CimInstance Win32_OperatingSystem\n$installDate = $os.InstallDate\nif ($installDate) {\n  $age = (New-TimeSpan -Start $installDate -End (Get-Date)).Days\n  $years = [math]::Round($age / 365, 1)\n  Write-Host \"  OS installed: $installDate ($years years ago)\"\n  if ($years -lt 1) { Write-Host '  [INFO] < 1 year - warranty likely active, run troubleshooting first' }\n  elseif ($years -ge 4) { Write-Host '  [WARN] > 4 years - recommend replacement (2021+ spec)'; $warnings += 'Workstation older than 4 years' }\n  else { Write-Host '  [INFO] 1-3 years - consult support leader if we sold this machine' }\n}\n$bios = Get-CimInstance Win32_BIOS\nWrite-Host \"  Serial (warranty lookup): $($bios.SerialNumber)\"\nWrite-Host \"  Manufacturer: $((Get-CimInstance Win32_ComputerSystem).Manufacturer)\"\n\nWrite-Host ''\nWrite-Host '=== Summary ==='\nif ($issues.Count -eq 0 -and $warnings.Count -eq 0) { Write-Host 'All automated checks passed. Proceed to troubleshooting if still slow.' }\nelse {\n  if ($issues.Count) { Write-Host 'ISSUES:'; $issues | ForEach-Object { Write-Host \"  - $_\" } }\n  if ($warnings.Count) { Write-Host 'WARNINGS:'; $warnings | ForEach-Object { Write-Host \"  - $_\" } }\n  Write-Host 'If below spec, speed-up attempts may have limited success.'\n}"
-    ]
+    "Script": "tools/MspPerfSpecCheck.ps1"
   },
   "MspPerfResourceSnapshot": {
     "Content": "CPU & Memory Snapshot",
     "Description": "Current CPU and memory usage. Consistently > 90% indicates a performance issue.",
     "category": "Performance",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$os = Get-CimInstance Win32_OperatingSystem\n$totalMem = $os.TotalVisibleMemorySize\n$freeMem = $os.FreePhysicalMemory\n$usedPct = [math]::Round((1 - ($freeMem / $totalMem)) * 100, 1)\nWrite-Host \"Memory usage: ${usedPct}% ($([math]::Round($freeMem/1MB,0)) MB free of $([math]::Round($totalMem/1MB,0)) MB)\"\nif ($usedPct -gt 90) { Write-Host '[ISSUE] Memory consistently high - check top processes' }\n\n$cpuSamples = @()\n1..3 | ForEach-Object { $cpuSamples += (Get-CimInstance Win32_Processor).LoadPercentage; Start-Sleep -Seconds 1 }\n$avgCpu = [math]::Round(($cpuSamples | Measure-Object -Average).Average, 1)\nWrite-Host \"CPU usage (3s avg): ${avgCpu}%\"\nif ($avgCpu -gt 90) { Write-Host '[ISSUE] CPU consistently high - check Resource Monitor' }\nWrite-Host 'Tip: Chrome with many tabs or high svchost often causes slowness. Patch/driver update may be needed.'"
-    ]
+    "Script": "tools/MspPerfResourceSnapshot.ps1"
   },
   "MspPerfOpenResourceMonitor": {
     "Content": "Open Resource Monitor",
     "Description": "Launches resmon.exe to inspect CPU, Memory, Disk, and Network per process.",
     "category": "Performance",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "Start-Process resmon.exe\nWrite-Host 'Resource Monitor opened. Check CPU/Memory/Disk tabs for processes > 90%.'"
-    ]
+    "Script": "tools/MspPerfOpenResourceMonitor.ps1"
   },
   "MspPerfTopProcesses": {
     "Content": "Top CPU & Memory Processes",
     "Description": "Lists top resource-consuming processes. Helps identify Chrome, svchost, or other hogs.",
     "category": "Performance",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "Write-Host '--- Top 10 by CPU ---'\nGet-Process | Sort-Object CPU -Descending | Select-Object -First 10 Name, Id, @{N='CPU_s';E={[math]::Round($_.CPU,1)}}, @{N='MemMB';E={[math]::Round($_.WorkingSet64/1MB,0)}} | Format-Table -AutoSize | Out-String | Write-Host\nWrite-Host '--- Top 10 by Memory ---'\nGet-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 10 Name, Id, @{N='MemMB';E={[math]::Round($_.WorkingSet64/1MB,0)}}, @{N='CPU_s';E={[math]::Round($_.CPU,1)}} | Format-Table -AutoSize | Out-String | Write-Host\nWrite-Host 'High svchost: try Windows Update or driver update. High Chrome: close unused tabs.'"
-    ]
+    "Script": "tools/MspPerfTopProcesses.ps1"
   },
   "MspPerfDismFull": {
     "Content": "DISM Full Sequence (scan/check/restore)",
     "Description": "Runs dism scanhealth, checkhealth, and restorehealth. Screenshot each result.",
     "category": "Performance",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "$cmds = @('/scanhealth','/checkhealth','/restorehealth')\nforeach ($arg in $cmds) {\n  Write-Host \"=== DISM /Online /Cleanup-Image $arg ===\"\n  $proc = Start-Process -FilePath DISM.exe -ArgumentList \"/Online /Cleanup-Image $arg\" -Wait -PassThru -NoNewWindow\n  Write-Host \"Exit code: $($proc.ExitCode)\"\n  Write-Host ''\n}\nWrite-Host 'DISM sequence complete. Run SFC next.'"
-    ]
+    "Script": "tools/MspPerfDismFull.ps1"
   },
   "MspPerfManufacturerInfo": {
     "Content": "Manufacturer Support & Driver Tools",
     "Description": "Shows serial number and links to Dell/HP/Lenovo support and driver updater tools.",
     "category": "Performance",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$cs = Get-CimInstance Win32_ComputerSystem\n$bios = Get-CimInstance Win32_BIOS\n$mfr = $cs.Manufacturer\nWrite-Host \"Manufacturer: $mfr\"\nWrite-Host \"Model: $($cs.Model)\"\nWrite-Host \"Serial: $($bios.SerialNumber) (also in ScreenConnect > General)\"\nWrite-Host ''\n$mfrLower = $mfr.ToLower()\nif ($mfrLower -match 'dell') {\n  Write-Host 'Dell Support: https://www.dell.com/support/home/en-us'\n  Write-Host 'Tools: Dell Command | Update, Dell SupportAssist'\n} elseif ($mfrLower -match 'hp|hewlett') {\n  Write-Host 'HP Support: https://support.hp.com/us-en'\n  Write-Host 'Tool: HP Support Assistant'\n} elseif ($mfrLower -match 'lenovo') {\n  Write-Host 'Lenovo Support: https://pcsupport.lenovo.com/us/en'\n  Write-Host 'Tools: Lenovo System Update, Lenovo Vantage'\n} else {\n  Write-Host 'Look up manufacturer support page using serial number above.'\n}\nWrite-Host ''\nWrite-Host 'Run Update Check + Install. Ask senior/SOC leader before network or BIOS updates.'"
-    ]
+    "Script": "tools/MspPerfManufacturerInfo.ps1"
   },
   "MspPerfStartupAudit": {
     "Content": "Audit Startup Applications",
     "Description": "Lists startup programs from registry and Startup folder. You can select one to remove from startup.",
     "category": "Performance",
     "RequiresAdmin": true,
-    "InvokeScript": [
-      "$runKeys = @('HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce','HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce')\n$startupDirs = @([Environment]::GetFolderPath('Startup'), \"$env:ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\")\nwhile ($true) {\n  $entries = @()\n  foreach ($p in $runKeys) {\n    if (Test-Path $p) {\n      Get-ItemProperty $p -ErrorAction SilentlyContinue | ForEach-Object { $_.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' } | ForEach-Object {\n        $entries += [PSCustomObject]@{ Type = 'Registry'; Location = $p; Name = $_.Name; Value = $_.Value; FullPath = $p }\n      } }\n    }\n  }\n  foreach ($dir in $startupDirs) {\n    if (Test-Path $dir) {\n      Get-ChildItem $dir -File -ErrorAction SilentlyContinue | ForEach-Object {\n        $entries += [PSCustomObject]@{ Type = 'Shortcut'; Location = $dir; Name = $_.Name; Value = $_.FullName; FullPath = $_.FullName }\n      }\n    }\n  }\n  if (-not $entries.Count) { Write-Host 'No startup entries found.' -ForegroundColor Green; return }\n  Write-Host '--- Startup Entries ---'\n  for ($i = 0; $i -lt $entries.Count; $i++) {\n    Write-Host (\"  [{0}] {1} ({2})\" -f ($i + 1), $entries[$i].Name, $entries[$i].Type)\n  }\n  Write-Host ''\n  $selection = Read-Host 'Enter the number to remove from startup, or 0 to exit'\n  if (-not $selection -or $selection -eq '0') { Write-Host 'Exiting tool.' -ForegroundColor Yellow; return }\n  $idx = [int]$selection - 1\n  if ($idx -lt 0 -or $idx -ge $entries.Count) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; continue }\n  $entry = $entries[$idx]\n  try {\n    if ($entry.Type -eq 'Registry') {\n      Remove-ItemProperty -Path $entry.FullPath -Name $entry.Name -Force -ErrorAction Stop\n    } else {\n      Remove-Item -LiteralPath $entry.FullPath -Force -ErrorAction Stop\n    }\n    Write-Host \"REMOVED from startup: $($entry.Name)\" -ForegroundColor Green\n  } catch {\n    Write-Host \"FAILED to remove $($entry.Name): $($_.Exception.Message)\" -ForegroundColor Red\n  }\n  Write-Host ''\n}"
-    ]
+    "Script": "tools/MspPerfStartupAudit.ps1"
   },
   "MspPerfServicesAudit": {
     "Content": "Audit Non-Microsoft Services",
     "Description": "Lists running non-Microsoft services. Review before disabling in msconfig.",
     "category": "Performance",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "while ($true) {\n  $services = Get-CimInstance Win32_Service | Where-Object { $_.State -eq 'Running' -and $_.PathName -notmatch 'Windows|Microsoft|windows|system32\\\\svchost' } | Sort-Object DisplayName\n  if (-not $services) { Write-Host 'No running non-Microsoft services found.' -ForegroundColor Green; return }\n  Write-Host '--- Running Non-Microsoft Services ---'\n  for ($i = 0; $i -lt $services.Count; $i++) {\n    $s = $services[$i]\n    $path = if ($s.PathName.Length -gt 80) { $s.PathName.Substring(0,80) + '...' } else { $s.PathName }\n    Write-Host (\"  [{0}] {1} ({2}) | {3}\" -f ($i + 1), $s.DisplayName, $s.Name, $path)\n  }\n  Write-Host ''\n  $selection = Read-Host 'Enter the service number to manage, or 0 to exit'\n  if (-not $selection -or $selection -eq '0') { Write-Host 'Exiting tool.' -ForegroundColor Yellow; return }\n  $index = [int]$selection - 1\n  if ($index -lt 0 -or $index -ge $services.Count) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; continue }\n  $s = $services[$index]\n  Write-Host ''\n  Write-Host (\"Selected: [{0}] {1} ({2})\" -f ($index + 1), $s.DisplayName, $s.Name)\n  Write-Host '  [1] Open services.msc'\n  Write-Host '  [2] Disable service'\n  Write-Host '  [3] Set to Manual + stop'\n  Write-Host '  [4] Return to service list'\n  Write-Host '  [5] Exit tool'\n  $action = Read-Host 'Select an option'\n  switch ($action) {\n    '1' { Start-Process services.msc; Write-Host 'Opened services.msc.' -ForegroundColor Green }\n    '2' { try { Set-Service -Name $s.Name -StartupType Disabled -ErrorAction Stop; Stop-Service -Name $s.Name -Force -ErrorAction Stop; Write-Host \"[DISABLED] $($s.DisplayName)\" -ForegroundColor Green } catch { Write-Host \"[FAILED] $($s.DisplayName): $($_.Exception.Message)\" -ForegroundColor Red } }\n    '3' { try { Set-Service -Name $s.Name -StartupType Manual -ErrorAction Stop; Stop-Service -Name $s.Name -Force -ErrorAction Stop; Write-Host \"[MANUAL + STOPPED] $($s.DisplayName)\" -ForegroundColor Green } catch { Write-Host \"[FAILED] $($s.DisplayName): $($_.Exception.Message)\" -ForegroundColor Red } }\n    '4' { continue }\n    '5' { Write-Host 'Exiting tool.' -ForegroundColor Yellow; return }\n    default { Write-Host 'Invalid selection.' -ForegroundColor Yellow }\n  }\n  Write-Host ''\n  Write-Host 'Do NOT disable Adobe, Broadcom, Realtek, Intel, AD, LENET services, driver-related.'\n}"
-    ]
+    "Script": "tools/MspPerfServicesAudit.ps1"
   },
   "MspPerfClearUserTemp": {
     "Content": "Clear User Temp Folder (%temp%)",
     "Description": "Clears %temp% folder per LENET procedure. Skips locked files.",
     "category": "Performance",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$tempPath = $env:TEMP\nWrite-Host \"Clearing: $tempPath\"\n$removed = 0; $skipped = 0\nGet-ChildItem $tempPath -Force -ErrorAction SilentlyContinue | ForEach-Object {\n  try { if ($_.PSIsContainer) { Remove-Item $_.FullName -Recurse -Force -ErrorAction Stop } else { $removed += $_.Length; Remove-Item $_.FullName -Force -ErrorAction Stop } } catch { $skipped++ }\n}\nWrite-Host \"Removed ~$([math]::Round($removed/1MB,1)) MB. Skipped $skipped locked items (OK to skip).\""
-    ]
+    "Script": "tools/MspPerfClearUserTemp.ps1"
   },
   "MspPerfDiskSpaceCheck": {
     "Content": "Check Disk Free Space",
     "Description": "Warns if any drive has less than 20% free (causes slow startup and performance).",
     "category": "Performance",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "Write-Host '--- Disk Free Space ---'\n$issues = @()\nGet-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object {\n  $freePct = if ($_.Size -gt 0) { [math]::Round(($_.FreeSpace / $_.Size) * 100, 1) } else { 0 }\n  $status = if ($freePct -lt 20) { 'LOW - run disk cleanup'; $issues += $_.DeviceID } else { 'OK' }\n  Write-Host \"  [$status] $($_.DeviceID) ${freePct}% free ($([math]::Round($_.FreeSpace/1GB,1)) GB of $([math]::Round($_.Size/1GB,1)) GB)\"\n}\nif ($issues.Count) { Write-Host 'Less than 20% free can cause slow startup. Run disk cleanup / WinDirStat.' }"
-    ]
+    "Script": "tools/MspPerfDiskSpaceCheck.ps1"
   },
   "MspPerfRecentUpdates": {
     "Content": "Recent Windows Updates (30 days)",
     "Description": "Lists updates installed in the last 30 days. Select one to uninstall (via DISM), or reinstall an update this tool removed earlier (via Windows Update). Cross-check CWA Patching History.",
     "category": "Performance",
     "RequiresAdmin": false,
-    "InvokeScript": [
-      "$since = (Get-Date).AddDays(-30)\n$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)\n# Removals are recorded per machine (not next to the tool) so they can be reinstalled after a restart\n$recordDir = Join-Path $env:ProgramData 'MSP-Tool'\n$recordFile = Join-Path $recordDir 'uninstalled-updates.json'\n$lastBoot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime\n\nfunction Get-RemovedRecords {\n  if (-not (Test-Path $recordFile)) { return ,@() }\n  try { $data = Get-Content -Path $recordFile -Raw -Encoding UTF8 | ConvertFrom-Json; return ,@($data) } catch { return ,@() }\n}\nfunction Save-RemovedRecords {\n  param($Records)\n  if (-not (Test-Path $recordDir)) { New-Item -ItemType Directory -Path $recordDir -Force | Out-Null }\n  ConvertTo-Json -InputObject @($Records) -Depth 3 | Set-Content -Path $recordFile -Encoding UTF8\n}\nfunction Test-RemovalPending {\n  param($Record)\n  try { [datetime]::ParseExact($Record.RemovedAt, 'yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture) -gt $lastBoot } catch { $false }\n}\n\nWrite-Host \"Updates installed since $($since.ToString('yyyy-MM-dd'))\"\nWrite-Host 'Cross-check CWA: Tiles > Patching > History (Failed/In Progress)'\nwhile ($true) {\n  try {\n    $updates = @(Get-HotFix -ErrorAction Stop | Where-Object { $_.InstalledOn -and $_.InstalledOn -ge $since } | Sort-Object InstalledOn -Descending)\n  } catch {\n    Write-Host 'Could not read hotfix history. Check CWA patching history manually.' -ForegroundColor Red\n    return\n  }\n  $records = Get-RemovedRecords\n  Write-Host ''\n  if (-not $updates.Count -and -not $records.Count) { Write-Host 'No updates installed in the last 30 days.' -ForegroundColor Green; return }\n  Write-Host '--- Recent Updates ---'\n  if (-not $updates.Count) { Write-Host '  (none installed in the last 30 days)' }\n  for ($i = 0; $i -lt $updates.Count; $i++) {\n    $u = $updates[$i]\n    $rec = $records | Where-Object { $_.KB -eq $u.HotFixID } | Select-Object -First 1\n    $note = if ($rec -and (Test-RemovalPending $rec)) { '  (uninstalled - pending restart)' } else { '' }\n    Write-Host ('  [{0}] {1}  {2}  {3}{4}' -f ($i + 1), $u.InstalledOn.ToString('yyyy-MM-dd'), $u.HotFixID, $u.Description, $note)\n  }\n  if ($records.Count) {\n    Write-Host ''\n    Write-Host '--- Uninstalled by MSP Tool (can be reinstalled with R) ---'\n    foreach ($r in $records) {\n      $state = if (Test-RemovalPending $r) { 'pending restart' } else { 'removed' }\n      Write-Host ('  {0}  removed {1} by {2}  ({3})' -f $r.KB, $r.RemovedAt, $r.RemovedBy, $state)\n    }\n  }\n  Write-Host ''\n  $selection = Read-Host 'Enter an update number to uninstall, R to reinstall a removed update, or 0 to exit'\n  if (-not $selection -or $selection -eq '0') { Write-Host 'Exiting tool.' -ForegroundColor Yellow; return }\n\n  if ($selection -match '^[Rr]$') {\n    # ---------------- Reinstall ----------------\n    if (-not $isAdmin) { Write-Host 'Reinstalling updates requires administrator rights. Relaunch MSP Tool elevated.' -ForegroundColor Red; continue }\n    Write-Host ''\n    for ($i = 0; $i -lt $records.Count; $i++) {\n      Write-Host ('  [{0}] {1}  removed {2}' -f ($i + 1), $records[$i].KB, $records[$i].RemovedAt)\n    }\n    Write-Host '  [M] Enter a KB number manually (update removed some other way)'\n    $pick = Read-Host 'Choose an update to reinstall, or 0 to cancel'\n    $record = $null\n    if ($pick -match '^[Mm]$') {\n      $kbIn = (Read-Host 'KB number (e.g. KB5012345)').Trim()\n      if ($kbIn -notmatch '^(KB)?\\d{6,8}$') { Write-Host 'Invalid KB number.' -ForegroundColor Yellow; continue }\n      $target = 'KB' + ($kbIn -replace '^KB', '')\n    } elseif ($pick -match '^\\d+$' -and [int]$pick -ge 1 -and [int]$pick -le $records.Count) {\n      $record = $records[[int]$pick - 1]\n      $target = $record.KB\n    } else { Write-Host 'Cancelled.' -ForegroundColor Yellow; continue }\n\n    if ($record -and (Test-RemovalPending $record)) { Write-Host \"The removal of $target is still pending a restart. Restart the computer first, then reinstall.\" -ForegroundColor Yellow; continue }\n    if (Get-HotFix -Id $target -ErrorAction SilentlyContinue) {\n      Write-Host \"$target is already installed - nothing to do.\" -ForegroundColor Green\n      try { Save-RemovedRecords @($records | Where-Object { $_.KB -ne $target }) } catch { }\n      continue\n    }\n    $kbNum = $target -replace '^KB', ''\n    Write-Host \"Searching Windows Update for $target (this can take several minutes)...\"\n    try {\n      $session = New-Object -ComObject Microsoft.Update.Session\n      $session.ClientApplicationID = 'MSP Tool'\n      $found = $session.CreateUpdateSearcher().Search('(IsInstalled=0 and IsHidden=0) or (IsInstalled=0 and IsHidden=1)')\n      $match = @($found.Updates | Where-Object { @($_.KBArticleIDs) -contains $kbNum })\n    } catch {\n      Write-Host \"[FAIL] Windows Update search failed: $($_.Exception.Message)\" -ForegroundColor Red\n      continue\n    }\n    if (-not $match.Count) {\n      Write-Host \"Windows Update is not offering $target.\" -ForegroundColor Yellow\n      Write-Host '  - It may have been superseded by a newer update: install the latest updates via Windows Update/CWA instead.'\n      Write-Host '  - Or this machine''s update policy (WSUS/CWA) is not offering it.'\n      Write-Host \"  - Manual option: download $target from https://www.catalog.update.microsoft.com and install the .msu.\"\n      continue\n    }\n    $wu = $match[0]\n    Write-Host \"Found: $($wu.Title)\"\n    if ($wu.IsHidden) { Write-Host '(This update is currently hidden in Windows Update - it will be unhidden.)' -ForegroundColor Yellow }\n    $answer = Read-Host \"Type $target to download and reinstall it (anything else cancels)\"\n    if ($answer -ne $target) { Write-Host 'Cancelled.' -ForegroundColor Yellow; continue }\n    try {\n      if ($wu.IsHidden) { $wu.IsHidden = $false }\n      if (-not $wu.EulaAccepted) { $wu.AcceptEula() }\n      $coll = New-Object -ComObject Microsoft.Update.UpdateColl\n      [void]$coll.Add($wu)\n      if (-not $wu.IsDownloaded) {\n        Write-Host 'Downloading...'\n        $downloader = $session.CreateUpdateDownloader()\n        $downloader.Updates = $coll\n        $dl = $downloader.Download()\n        if ($dl.ResultCode -ne 2 -and $dl.ResultCode -ne 3) { throw ('download failed (result code {0}, HRESULT 0x{1:X8})' -f $dl.ResultCode, $dl.HResult) }\n      }\n      Write-Host 'Installing (this can take several minutes)...'\n      $installer = $session.CreateUpdateInstaller()\n      $installer.Updates = $coll\n      $res = $installer.Install()\n      if ($res.ResultCode -ne 2 -and $res.ResultCode -ne 3) { throw ('install failed (result code {0}, HRESULT 0x{1:X8})' -f $res.ResultCode, $res.HResult) }\n      Write-Host \"[OK] $target reinstalled.\" -ForegroundColor Green\n      if ($res.RebootRequired) { Write-Host 'RESTART REQUIRED to finish.' -ForegroundColor Yellow }\n      try { Save-RemovedRecords @($records | Where-Object { $_.KB -ne $target }) } catch { Write-Host \"Could not update $recordFile : $($_.Exception.Message)\" -ForegroundColor Yellow }\n    } catch {\n      Write-Host \"[FAIL] Reinstall of $target failed: $($_.Exception.Message)\" -ForegroundColor Red\n      Write-Host 'Note: Windows Update downloads are blocked in remote PowerShell (WinRM/SSH) sessions - run from the desktop or ScreenConnect Backstage instead.'\n    }\n    continue\n  }\n\n  # ---------------- Uninstall ----------------\n  if ($selection -notmatch '^\\d+$' -or [int]$selection -lt 1 -or [int]$selection -gt $updates.Count) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; continue }\n  $u = $updates[[int]$selection - 1]\n  $kb = $u.HotFixID -replace '^KB', ''\n  $installed = $u.InstalledOn.ToString('yyyy-MM-dd')\n  Write-Host ''\n  Write-Host \"Selected: $($u.HotFixID) - $($u.Description) - installed $installed\"\n  $rec = $records | Where-Object { $_.KB -eq $u.HotFixID } | Select-Object -First 1\n  if ($rec -and (Test-RemovalPending $rec)) { Write-Host 'Already uninstalled - restart the computer to finish removing it.' -ForegroundColor Yellow; continue }\n  if (-not $isAdmin) { Write-Host 'Uninstalling updates requires administrator rights. Relaunch MSP Tool elevated.' -ForegroundColor Red; continue }\n\n  # DISM rather than wusa: wusa ignores /quiet on Windows 10+ and shows a dialog, which hangs\n  # unattended in Backstage/SYSTEM, SSH, and RMM sessions. DISM is also the only way to remove\n  # a cumulative update that shipped bundled with a servicing stack update.\n  Write-Host 'Looking up installed update packages (this can take a minute)...'\n  try {\n    $pkgs = @(Get-WindowsPackage -Online -ErrorAction Stop | Where-Object { $_.PackageState -eq 'Installed' })\n  } catch {\n    Write-Host \"[FAIL] Could not list update packages: $($_.Exception.Message)\" -ForegroundColor Red\n    continue\n  }\n  $candidates = @($pkgs | Where-Object { $_.PackageName -match \"KB$kb(\\D|$)\" })\n  $confirmed = $candidates.Count -gt 0\n  if ($confirmed) {\n    Write-Host \"Package(s) for $($u.HotFixID):\"\n  } else {\n    $candidates = @($pkgs | Where-Object { $_.PackageName -match 'RollupFix' })\n    if (-not $candidates.Count) {\n      Write-Host \"No removable package found for $($u.HotFixID). Try Settings > Windows Update > Update history > Uninstall updates.\" -ForegroundColor Yellow\n      continue\n    }\n    Write-Host \"No package is named after $($u.HotFixID).\" -ForegroundColor Yellow\n    Write-Host \"If $($u.HotFixID) is the monthly cumulative update, it is the 'Package_for_RollupFix' package below.\"\n    Write-Host \"$($u.HotFixID) was installed $installed - only continue if the package install date matches.\" -ForegroundColor Yellow\n  }\n  for ($i = 0; $i -lt $candidates.Count; $i++) {\n    $t = $candidates[$i].InstallTime\n    $when = if ($t -is [datetime]) { $t.ToString('yyyy-MM-dd HH:mm') } elseif ($t) { \"$t\" } else { 'unknown' }\n    Write-Host ('  [{0}] {1}  (installed {2})' -f ($i + 1), $candidates[$i].PackageName, $when)\n  }\n  $pick = Read-Host 'Enter the package number to remove, or 0 to cancel'\n  if ($pick -notmatch '^\\d+$' -or [int]$pick -lt 1 -or [int]$pick -gt $candidates.Count) { Write-Host 'Cancelled.' -ForegroundColor Yellow; continue }\n  $pkgName = $candidates[[int]$pick - 1].PackageName\n\n  Write-Host ''\n  Write-Host 'WARNING: Removing a security/cumulative update leaves the machine unpatched. Confirm with a senior/SOC leader, and pause/decline the patch in CWA so it is not reinstalled.' -ForegroundColor Yellow\n  if ($confirmed) {\n    $answer = Read-Host \"Type $($u.HotFixID) to remove $pkgName (anything else cancels)\"\n    if ($answer -ne $u.HotFixID) { Write-Host 'Cancelled.' -ForegroundColor Yellow; continue }\n  } else {\n    Write-Host \"This package is NOT confirmed to be $($u.HotFixID).\" -ForegroundColor Yellow\n    $answer = Read-Host \"Type YES (uppercase) to remove $pkgName (anything else cancels)\"\n    if ($answer -cne 'YES') { Write-Host 'Cancelled.' -ForegroundColor Yellow; continue }\n  }\n\n  Write-Host \"Removing $pkgName (this can take several minutes)...\"\n  try {\n    $result = Remove-WindowsPackage -Online -PackageName $pkgName -NoRestart -ErrorAction Stop\n    Write-Host \"[OK] Removed $pkgName.\" -ForegroundColor Green\n    if ($result.RestartNeeded) { Write-Host 'RESTART REQUIRED to finish. The update stays in the list until then.' -ForegroundColor Yellow }\n    Write-Host 'To undo, run this tool again and choose R (reinstall).'\n    try {\n      $newRecord = [pscustomobject]@{ KB = $u.HotFixID; Description = $u.Description; Package = $pkgName; RemovedAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); RemovedBy = \"$env:USERDOMAIN\\$env:USERNAME\" }\n      Save-RemovedRecords (@($records | Where-Object { $_.KB -ne $u.HotFixID }) + $newRecord)\n    } catch {\n      Write-Host \"Could not record the removal in $recordFile : $($_.Exception.Message)\" -ForegroundColor Yellow\n    }\n  } catch {\n    Write-Host \"[FAIL] Could not remove ${pkgName}: $($_.Exception.Message)\" -ForegroundColor Red\n  }\n}"
-    ]
+    "Script": "tools/MspPerfRecentUpdates.ps1"
   }
 }
