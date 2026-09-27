@@ -170,6 +170,10 @@ function Get-MspConfig {
 }
 
 . (Join-Path $ScriptRoot 'functions\Invoke-MspTool.ps1')
+
+# Every tool run is also appended to one combined report per computer (all tools, all runs)
+$MspCombinedReportPath = Get-MspDefaultCombinedReportPath
+Write-MspLog "Combined report: $MspCombinedReportPath"
 . (Join-Path $ScriptRoot 'functions\Invoke-MspProcedure.ps1')
 
 $toolConfig = Get-MspConfig -Name 'tools'

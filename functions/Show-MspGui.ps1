@@ -10,7 +10,10 @@ function Show-MspGui {
         [string[]]$ProcedureNames = @(),
 
         # Tool/procedure output is appended here as well as to the on-screen log
-        [string]$LogFile
+        [string]$LogFile,
+
+        # Combined all-tools report (see Start-MspCombinedReportEntry); empty = none
+        [string]$CombinedReport
     )
 
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
@@ -330,7 +333,9 @@ function Show-MspGui {
     # Get-Credential are replaced by functions that call these on the UI thread.
     # ------------------------------------------------------------------
     function Show-MspInputDialog {
-        param([string]$Message, [bool]$Secure, [bool]$Credential)
+        # -TimeoutSeconds > 0: pre-fill -Default and auto-accept it when the countdown ends (typing stops the
+        # countdown); Cancel then returns $null so the tool can treat it as "skip"
+        param([string]$Message, [bool]$Secure, [bool]$Credential, [int]$TimeoutSeconds = 0, [string]$Default = '')
 
         $dialogXaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -344,6 +349,7 @@ function Show-MspGui {
     <TextBlock x:Name="PasswordLabel" Text="Password" Foreground="#A6ADC8" Margin="0,0,0,2"/>
     <PasswordBox x:Name="PasswordBox" Background="#313244" Foreground="#FFFFFF" BorderBrush="#45475A" Padding="6,4"/>
     <TextBox x:Name="InputBox" Background="#313244" Foreground="#FFFFFF" BorderBrush="#45475A" Padding="6,4"/>
+    <TextBlock x:Name="CountdownText" Foreground="#F9E2AF" FontFamily="Segoe UI" Margin="0,8,0,0" Visibility="Collapsed"/>
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
       <Button x:Name="OkBtn" Content="OK" IsDefault="True" MinWidth="80" Margin="4" Padding="10,4"/>
       <Button x:Name="CancelBtn" Content="Cancel" IsCancel="True" MinWidth="80" Margin="4" Padding="10,4"/>
@@ -368,6 +374,28 @@ function Show-MspGui {
         else { $passwordLabel.Visibility = 'Collapsed'; $passwordBox.Visibility = 'Collapsed' }
 
         $dialog.FindName('OkBtn').Add_Click({ $dialog.DialogResult = $true })
+
+        $countdown = @{ Left = $TimeoutSeconds; Timer = $null }
+        if ($TimeoutSeconds -gt 0 -and -not $Secure -and -not $Credential) {
+            $inputBox.Text = $Default
+            $inputBox.SelectAll()
+            $countdownText = $dialog.FindName('CountdownText')
+            $countdownText.Visibility = 'Visible'
+            $countdownText.Text = "Continuing with '$Default' in $TimeoutSeconds s - type to change"
+            $countdown.Timer = New-Object System.Windows.Threading.DispatcherTimer
+            $countdown.Timer.Interval = [TimeSpan]::FromSeconds(1)
+            $countdown.Timer.Add_Tick({
+                $countdown.Left--
+                if ($countdown.Left -le 0) { $countdown.Timer.Stop(); $dialog.DialogResult = $true; return }
+                $countdownText.Text = "Continuing with '$Default' in $($countdown.Left) s - type to change"
+            })
+            # A key press or any change to the text (typing, pasting) means the technician is answering - stop the countdown
+            $stopCountdown = { if ($countdown.Timer.IsEnabled) { $countdown.Timer.Stop(); $countdownText.Visibility = 'Collapsed' } }
+            $inputBox.Add_PreviewKeyDown($stopCountdown)
+            $inputBox.Add_TextChanged($stopCountdown)
+            $dialog.Add_ContentRendered({ $countdown.Timer.Start() })
+            $dialog.Add_Closed({ $countdown.Timer.Stop() })
+        }
         $dialog.Add_ContentRendered({
             if ($Credential) { [void]$userBox.Focus() } elseif ($Secure) { [void]$passwordBox.Focus() } else { [void]$inputBox.Focus() }
         })
@@ -381,6 +409,11 @@ function Show-MspGui {
             if ($ok -and $passwordBox.SecurePassword.Length) { return $passwordBox.SecurePassword }
             return $null
         }
+        if ($TimeoutSeconds -gt 0) {
+            if (-not $ok) { return $null }
+            if ([string]::IsNullOrWhiteSpace($inputBox.Text)) { return $Default }
+            return $inputBox.Text
+        }
         if ($ok) { return $inputBox.Text }
         return ''
     }
@@ -392,11 +425,13 @@ function Show-MspGui {
     $sync.AppendLog = [Action[object]] { param($m) Write-LogLine "$m" }
     $sync.Prompt = [Func[object, object, object]] { param($msg, $secure) Show-MspInputDialog -Message "$msg" -Secure ([bool]$secure) }
     $sync.Credential = [Func[object, object]] { param($msg) Show-MspInputDialog -Message "$msg" -Credential $true }
+    $sync.TimedPrompt = [Func[object, object, object, object]] { param($msg, $seconds, $default) Show-MspInputDialog -Message "$msg" -TimeoutSeconds ([int]$seconds) -Default "$default" }
 
     $runnerScript = {
-        param($sync, $repoRoot, $mode, $target, $autoOnly, $toolConfig, $logFile)
+        param($sync, $repoRoot, $mode, $target, $autoOnly, $toolConfig, $logFile, $combinedReport)
         $ErrorActionPreference = 'Stop'
         $ScriptRoot = $repoRoot
+        $MspCombinedReportPath = $combinedReport
         . (Join-Path $repoRoot 'functions\Invoke-MspTool.ps1')
         . (Join-Path $repoRoot 'functions\Invoke-MspProcedure.ps1')
 
@@ -404,6 +439,11 @@ function Show-MspGui {
         function global:Read-Host {
             param([Parameter(Position = 0)][object]$Prompt, [switch]$AsSecureString)
             $sync.Window.Dispatcher.Invoke($sync.Prompt, [object[]]@("$Prompt", [bool]$AsSecureString))
+        }
+        # Same scope as the dot-sourced engine version, so this one wins for tools run from here
+        function Read-MspHostWithTimeout {
+            param([Parameter(Mandatory)][string]$Prompt, [int]$TimeoutSeconds = 5, [string]$Default = '')
+            $sync.Window.Dispatcher.Invoke($sync.TimedPrompt, [object[]]@($Prompt, $TimeoutSeconds, $Default))
         }
         function global:Get-Credential {
             param([Parameter(Position = 0)][object]$UserName, [string]$Message, [string]$Title)
@@ -456,7 +496,7 @@ function Show-MspGui {
         $ps = [powershell]::Create()
         $ps.Runspace = $runspace
         $sync.StopRequested = $false
-        [void]$ps.AddScript($runnerScript).AddArgument($sync).AddArgument($repoRoot).AddArgument($Mode).AddArgument($Target).AddArgument($AutoOnly).AddArgument($ToolConfig).AddArgument($LogFile)
+        [void]$ps.AddScript($runnerScript).AddArgument($sync).AddArgument($repoRoot).AddArgument($Mode).AddArgument($Target).AddArgument($AutoOnly).AddArgument($ToolConfig).AddArgument($LogFile).AddArgument($CombinedReport)
         $run.Job = @{ PowerShell = $ps; Runspace = $runspace; Handle = $ps.BeginInvoke() }
         Set-RunningState -Running $true -Status 'Running...'
         $timer.Start()

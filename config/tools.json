@@ -15,7 +15,7 @@
   },
   "MspDiagNetwork": {
     "Content": "Network Connectivity Test",
-    "Description": "Tests ping and DNS, shows public IP and proxy settings, checks TCP ports (443, DNS, optional 3389), shows Wi-Fi signal/band/rates (flags weak signal), and optionally runs a traceroute and saves the Windows WLAN report (admin).",
+    "Description": "Tests ping and DNS, shows public IP and proxy settings, checks TCP ports (443, DNS, optional 3389), shows Wi-Fi signal/band/rates (flags weak signal), runs a traceroute (target prompt defaults to 8.8.8.8 after 5 s, n = skip) and saves the Windows WLAN report (admin; defaults to yes after 5 s). All results are saved to a text report in MSP-Reports.",
     "category": "Diagnostics",
     "RequiresAdmin": false,
     "Script": "tools/MspDiagNetwork.ps1"

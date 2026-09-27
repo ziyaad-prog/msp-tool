@@ -168,6 +168,10 @@ function Get-MspConfig {
 }
 
 . (Join-Path $ScriptRoot 'functions\Invoke-MspTool.ps1')
+
+# Every tool run is also appended to one combined report per computer (all tools, all runs)
+$MspCombinedReportPath = Get-MspDefaultCombinedReportPath
+Write-MspLog "Combined report: $MspCombinedReportPath"
 . (Join-Path $ScriptRoot 'functions\Invoke-MspProcedure.ps1')
 
 $toolConfig = Get-MspConfig -Name 'tools'
@@ -262,6 +266,6 @@ if ($Tools) {
 
 # Tools run in a background runspace inside the GUI (so the window stays responsive and
 # prompts appear as dialogs); their output is appended to $LogFile.
-Show-MspGui -ToolConfig $toolConfig -PresetConfig $presetConfig -ProcedureNames @(Get-MspProcedureNames) -LogFile $LogFile
+Show-MspGui -ToolConfig $toolConfig -PresetConfig $presetConfig -ProcedureNames @(Get-MspProcedureNames) -LogFile $LogFile -CombinedReport $MspCombinedReportPath
 
 Exit-MspSession

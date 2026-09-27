@@ -17,6 +17,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 Add-Type -Namespace MspTest -Name Win32 -MemberDefinition '[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);'
 $logFile = Join-Path ([IO.Path]::GetTempPath()) "msptool-gui-test-$PID.log"
+$combinedFile = Join-Path ([IO.Path]::GetTempPath()) "msptool-gui-combined-$PID.txt"
 Remove-Item $logFile -ErrorAction SilentlyContinue
 $AE = [System.Windows.Automation.AutomationElement]
 $TS = [System.Windows.Automation.TreeScope]
@@ -71,7 +72,7 @@ function Answer-Dialog([string]$Text, [string]$User, [string]$Password) {
     return $prompt
 }
 
-$proc = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSScriptRoot\gui-test-host.ps1`"", '-LogFile', "`"$logFile`"") -PassThru
+$proc = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSScriptRoot\gui-test-host.ps1`"", '-LogFile', "`"$logFile`"", '-CombinedReport', "`"$combinedFile`"") -PassThru
 try {
     $main = Find-Window 'MSP Tool' $proc.Id
     Check ($null -ne $main) 'GUI window opened'
@@ -145,6 +146,8 @@ try {
     # --- 5. Log file gets GUI activity ---
     $fileText = if (Test-Path $logFile) { Get-Content $logFile -Raw } else { '' }
     Check ($fileText -match 'ACTION: Running tools' -and $fileText -match 'picked=2' -and $fileText -match 'slow end') 'GUI tool output is written to the .log file'
+    $combinedText = if (Test-Path $combinedFile) { Get-Content $combinedFile -Raw } else { '' }
+    Check ($combinedText -match 'Test Prompt Tool \(TestPrompt\)' -and $combinedText -match 'picked=2' -and $combinedText -match 'slow end') 'GUI tool runs are appended to the combined all-tools report'
 
     # --- 6. Search hides tools, their descriptions, and empty category headers ---
     Check ((Test-AnyOnScreen 'Test Slow Tool') -and (Test-AnyOnScreen '    Sleeps five seconds')) 'before searching, the slow tool and its description are shown'
@@ -159,6 +162,29 @@ try {
     Check ($headers.Count -eq 0) 'category header is hidden when none of its tools match'
 
     Set-Value (Find-ById $main 'SearchBox') ''
+
+    # --- 6b. Timed prompts (Read-MspHostWithTimeout): countdown dialog ---
+    Set-Tool 'Test Slow Tool' $false; Set-Tool 'Test Timed Prompt Tool' $true
+    $done = Get-Count 'Batch complete.'
+    Invoke-El (Find-ById $main 'RunBtn')
+    $dlg = Find-Window 'MSP Tool - Input required' $proc.Id 8000
+    $cd = if ($dlg) { Find-ById $dlg 'CountdownText' 2000 } else { $null }
+    Check ($null -ne $cd -and $cd.Current.Name -match "Continuing with 'dflt' in \d s") "timed prompt shows a countdown (got '$(if ($cd) { $cd.Current.Name })')"
+    Check ($dlg -and (Get-Value (Find-ById $dlg 'InputBox')) -eq 'dflt') 'timed prompt is pre-filled with the default'
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $auto = Wait-Log 'timed1=dflt' 0 8000
+    Check ($auto -and $sw.Elapsed.TotalSeconds -ge 1.5) "left alone, it continues with the default by itself (after $([math]::Round($sw.Elapsed.TotalSeconds,1)) s)"
+    $dlg = Find-Window 'MSP Tool - Input required' $proc.Id 8000
+    Set-Value (Find-ById $dlg 'InputBox') 'typed'
+    Start-Sleep -Seconds 4   # longer than the 3 s countdown
+    Check ($null -ne (Find-Window 'MSP Tool - Input required' $proc.Id 500) -and (Get-Count 'timed2=') -eq 0) 'typing stops the countdown (dialog still waiting after the timeout)'
+    Invoke-El (Find-ById $dlg 'OkBtn')
+    Check (Wait-Log 'timed2=typed' 0 5000) 'the typed answer is returned'
+    $dlg = Find-Window 'MSP Tool - Input required' $proc.Id 8000
+    Invoke-El (Find-ById $dlg 'CancelBtn')
+    Check (Wait-Log 'timed3=[] isnull=True' 0 5000) 'Cancel returns $null (tool treats it as skip)'
+    [void](Wait-Log 'Batch complete.' $done 8000)
+    Set-Tool 'Test Timed Prompt Tool' $false; Set-Tool 'Test Slow Tool' $true
 
     # --- 7. Closing while running + Yes: waits for the running tool to finish, then closes ---
     $fileEndsBefore = ([regex]::Matches((Get-Content $logFile -Raw), 'slow end')).Count
@@ -183,5 +209,5 @@ catch { $results.Add("[FAIL] driver error: $($_.Exception.Message) (line $($_.In
 finally { if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force } }
 $results
 "{0} passed, {1} failed" -f @($results | Where-Object { $_ -like '`[PASS*' }).Count, @($results | Where-Object { $_ -like '`[FAIL*' }).Count
-Remove-Item -LiteralPath $logFile -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $logFile, $combinedFile -ErrorAction SilentlyContinue
 exit @($results | Where-Object { $_ -like '`[FAIL*' }).Count

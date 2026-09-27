@@ -11,7 +11,7 @@ Inspired by [Chris Titus Tech's WinUtil](https://github.com/christitustech/winut
 - **CLI mode**: `-Preset`, `-Tools` or `-Procedure` for RMM and scripted runs.
 - **Presets**: one-click bundles such as health checks, security audits, patching repair and ticket evidence.
 - **Procedures**: step-by-step SOPs that mix automated tools with manual instructions.
-- **Reports and logging**: reports go to `Desktop\MSP-Reports`, and every session is logged to `logs\`. **Report View** and **Ticket Bundle** collect them for a ConnectWise ticket.
+- **Reports and logging**: reports go to `Desktop\MSP-Reports`, and every session is logged to `logs\`. Every tool's output is also appended to one combined `all-tools-report-<COMPUTER>.txt`. **Report View** and **Ticket Bundle** collect them for a ConnectWise ticket.
 - **One file per tool**: each tool is a plain `.ps1` in `tools\`, registered in `config\tools.json`.
 
 ## Requirements
@@ -95,7 +95,7 @@ The Admin column marks tools the engine skips unless MSP Tool is elevated. Tools
 | Export Critical Event Logs & Reliability Report |  | System/Application errors (24h), a Reliability Monitor report (HTML + CSV, 30 days), and opens `perfmon /rel`. |
 | Export System Information |  | OS, uptime, pending reboot, BIOS/serial, TPM, Secure Boot, Windows 11 readiness indicator, users, disks, network, installed software, `ipconfig /all`, `route print`. Saved as text and HTML. |
 | Microsoft 365 Health |  | Office version and update channel, last update result, licensing and signed-in accounts, Outlook profiles and OST/PST sizes, and classic vs new Teams. |
-| Network Connectivity Test |  | Ping/DNS, public IP, proxy, TCP port checks, Wi-Fi signal/band, and optional traceroute and WLAN report. |
+| Network Connectivity Test |  | Ping/DNS, public IP, proxy, TCP port checks, Wi-Fi signal/band, traceroute (defaults to 8.8.8.8 after 5 s) and WLAN report (admin; defaults to yes after 5 s). Results are saved as a text report. |
 | Pending Reboot Check |  | Standard pending-reboot indicators, uptime, and a restart offer (default no) only if a reboot is pending. |
 | Report View |  | Lists saved reports and logs to view or open, bundles them for a ticket, and deletes old reports. |
 | Ticket Bundle |  | Zips recent reports and logs with a summary into `ticket-<COMPUTER>-<date>.zip`. |
@@ -211,7 +211,8 @@ An interactive domain join/repair script covering status, secure channel test an
 
 | What | Where |
 |---|---|
-| Reports (system info, reliability, battery, security scorecard, CSV exports, ticket zips) | `Desktop\MSP-Reports\` of the user running the tool |
+| Reports (system info, network test, reliability, battery, security scorecard, CSV exports, ticket zips) | `Desktop\MSP-Reports\` of the user running the tool |
+| **Combined report**: the output of every tool run, all tools, appended with a header per run (date/time, tool, user) | `Desktop\MSP-Reports\all-tools-report-<COMPUTER>.txt`. Rotated to `.old` past 10 MB (`$MspCombinedReportMaxMB` in `functions\Invoke-MspTool.ps1`) |
 | Session logs and transcripts | `logs\` in the MSP Tool folder |
 | Updates removed by *Recent Windows Updates* (used for reinstall) | `C:\ProgramData\MSP-Tool\uninstalled-updates.json` |
 
@@ -255,7 +256,9 @@ Logs record tool output. Tools never print secrets such as recovery keys, LAPS p
    - Ask for a typed `YES` before anything destructive.
    - Never restart automatically.
 
-   `Read-Host` and `Get-Credential` work in all three front-ends; the GUI shows them as dialogs.
+   `Read-Host` and `Get-Credential` work in all three front-ends; the GUI shows them as dialogs. For a question that should carry on by itself, use `Read-MspHostWithTimeout -Prompt ... -TimeoutSeconds 5 -Default ...`:
+   - The console shows a countdown and the GUI shows a countdown dialog. An unattended run takes the default immediately.
+   - In the GUI, Cancel returns `$null`; treat that as "skip".
 4. Run the tests.
 
 ## Tests

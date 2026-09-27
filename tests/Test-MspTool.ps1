@@ -114,6 +114,30 @@ try {
     Assert-True ($results.Count -eq 4 -and $results[1].Success -eq $false -and $text -match 'Unknown tool: Typo') 'unknown tool ID is reported and the batch continues'
     Assert-True ($results[3].Success -eq $false -and $text -match '\[ERROR\] Throwing tool - boom') 'a throwing tool is reported as failed'
     Assert-True ($results[0].Success -and $results[2].Success) 'successful tools report success'
+
+    # Combined all-tools report
+    Assert-True ($null -eq (Start-MspCombinedReportEntry -ToolName 'x' -ToolId 'x')) 'no combined report is written unless $MspCombinedReportPath is set'
+    $MspCombinedReportPath = Join-Path ([IO.Path]::GetTempPath()) "msptool-combined-test-$PID.txt"
+    try {
+        $null = Invoke-MspToolBatch -ToolIds FileTool, Typo, BadTool -ToolConfig $cfg -OnLog { param($m) }
+        $null = Invoke-MspToolBatch -ToolIds InlineTool -ToolConfig $cfg -OnLog { param($m) }
+        $combinedText = Get-Content -LiteralPath $MspCombinedReportPath -Raw -Encoding UTF8
+        $headers = ([regex]::Matches($combinedText, '(?m)^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d  .+ \((FileTool|Typo|BadTool|InlineTool)\)\r?$')).Count
+        Assert-True ($headers -eq 4) "combined report gets a header per tool run, appended across batches (found $headers of 4)"
+        Assert-True ($combinedText -match 'from host' -and $combinedText -match 'from warning' -and $combinedText -match 'inline ok') 'combined report contains each tool''s output'
+        Assert-True ($combinedText -match 'Unknown tool: Typo' -and $combinedText -match '\[ERROR\] Throwing tool - boom' -and $combinedText -match '\[DONE\] File tool') 'combined report records results (DONE / unknown / ERROR)'
+        $bytes = [IO.File]::ReadAllBytes($MspCombinedReportPath); $boms = 0
+        for ($i = 0; $i -lt $bytes.Length - 2; $i++) { if ($bytes[$i] -eq 0xEF -and $bytes[$i + 1] -eq 0xBB -and $bytes[$i + 2] -eq 0xBF) { $boms++ } }
+        Assert-True ($boms -le 1) "appending does not scatter byte-order marks through the file (found $boms)"
+        $MspCombinedReportMaxMB = 0.0001   # ~100 bytes: the next run must rotate the full file to .old
+        $null = Invoke-MspToolBatch -ToolIds InlineTool -ToolConfig $cfg -OnLog { param($m) }
+        $rotatedOk = (Test-Path -LiteralPath "$MspCombinedReportPath.old") -and ((Get-Content -LiteralPath $MspCombinedReportPath -Raw) -notmatch 'FileTool')
+        Assert-True $rotatedOk 'combined report rotates to .old once it passes the size limit'
+    }
+    finally {
+        Remove-Item -LiteralPath $MspCombinedReportPath, "$MspCombinedReportPath.old" -Force -ErrorAction SilentlyContinue
+        Remove-Variable -Name MspCombinedReportPath, MspCombinedReportMaxMB -ErrorAction SilentlyContinue
+    }
 }
 finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
 

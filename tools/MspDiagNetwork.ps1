@@ -10,7 +10,8 @@ $portChecks = @(
   @{ Name = 'RDP (optional - set a host)'; Host = ''; Port = 3389 }
 )
 $portTimeoutMs = 3000
-$tracerouteTarget = '8.8.8.8'
+$tracerouteTarget = '8.8.8.8'   # used when the traceroute prompt gets no answer
+$promptTimeoutSec = 5           # traceroute target / Wi-Fi report prompts take their default after this
 $tracerouteMaxHops = 15
 $tracerouteWaitMs = 500
 $wifiWeakSignalPercent = 50
@@ -19,11 +20,41 @@ $reportDir = Join-Path $env:USERPROFILE 'Desktop\MSP-Reports'
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $issues = [System.Collections.Generic.List[string]]::new()
+
+# Everything this tool prints is also collected for a text report (saved at the end): this local
+# Write-Host records each line, then passes it to the real Write-Host unchanged.
+$reportLines = [System.Collections.Generic.List[string]]::new()
+$reportLines.Add('=== MSP Network Connectivity Test ===')
+$reportLines.Add("Computer : $env:COMPUTERNAME")
+$reportLines.Add("User     : $env:USERDOMAIN\$env:USERNAME")
+$reportLines.Add("Date     : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+$reportLines.Add('')
+function Write-Host {
+  param(
+    [Parameter(Position = 0, ValueFromPipeline = $true)][object]$Object,
+    [switch]$NoNewline, [object]$Separator, [System.ConsoleColor]$ForegroundColor, [System.ConsoleColor]$BackgroundColor
+  )
+  process {
+    $reportLines.Add(("$Object").TrimEnd())
+    Microsoft.PowerShell.Utility\Write-Host @PSBoundParameters
+  }
+}
 # Runs a native command without letting stderr/exit codes throw under $ErrorActionPreference = 'Stop'
 function Invoke-NativeQuiet {
   param([scriptblock]$Command)
   $ErrorActionPreference = 'Continue'
   try { @(& $Command 2>$null | ForEach-Object { "$_" }) } catch { @() }
+}
+# Prompt that takes $Default after $promptTimeoutSec (engine helper; plain Read-Host if run outside MSP Tool).
+# Returns $null if the technician cancels the GUI dialog.
+function Read-TimedAnswer {
+  param([string]$Prompt, [string]$Default)
+  if (Get-Command Read-MspHostWithTimeout -ErrorAction SilentlyContinue) {
+    return Read-MspHostWithTimeout -Prompt $Prompt -TimeoutSeconds $promptTimeoutSec -Default $Default
+  }
+  $a = Read-Host "$Prompt (Enter = $Default)"
+  if ([string]::IsNullOrWhiteSpace($a)) { return $Default }
+  return $a
 }
 # TCP connect with a hard timeout (Test-NetConnection -Port has no timeout switch in PowerShell 5.1)
 function Test-TcpPort {
@@ -130,14 +161,22 @@ if (-not $wifiUp.Count) {
   }
 }
 
-# ---------------- Traceroute (optional, slow) ----------------
+# ---------------- Traceroute (defaults to $tracerouteTarget after $promptTimeoutSec s) ----------------
 Write-Host ''
-$ans = Read-Host "Run traceroute to $tracerouteTarget (up to $tracerouteMaxHops hops, can take a minute)? (y/N)"
-if ($ans -match '^[Yy]') {
-  Write-Host "--- Traceroute to $tracerouteTarget ---" -ForegroundColor Cyan
+$target = Read-TimedAnswer -Prompt "Traceroute target IP or hostname (n = skip; up to $tracerouteMaxHops hops, can take a minute)" -Default $tracerouteTarget
+if ($null -eq $target -or "$target".Trim() -match '^(?i)(n|no|skip|0)$') {
+  Write-Host 'Traceroute skipped.'
+} else {
+  $target = "$target".Trim()
+  if (-not $target) { $target = $tracerouteTarget }
+  if ($target -notmatch '^[A-Za-z0-9.:\-]+$') {
+    Write-Host "'$target' is not a valid IP address or hostname - using $tracerouteTarget." -ForegroundColor Yellow
+    $target = $tracerouteTarget
+  }
+  Write-Host "--- Traceroute to $target ---" -ForegroundColor Cyan
   # Streamed line by line so hops appear as they are found
-  & { $ErrorActionPreference = 'Continue'; tracert -d -h $tracerouteMaxHops -w $tracerouteWaitMs $tracerouteTarget 2>$null } | Where-Object { "$_".Trim() } | ForEach-Object { Write-Host $_ }
-} else { Write-Host 'Traceroute skipped.' }
+  & { $ErrorActionPreference = 'Continue'; tracert -d -h $tracerouteMaxHops -w $tracerouteWaitMs $target 2>$null } | Where-Object { "$_".Trim() } | ForEach-Object { Write-Host $_ }
+}
 
 # ---------------- Windows Wi-Fi report (optional, admin) ----------------
 if ($wifiUp.Count -or (Get-Service -Name WlanSvc -ErrorAction SilentlyContinue)) {
@@ -145,8 +184,9 @@ if ($wifiUp.Count -or (Get-Service -Name WlanSvc -ErrorAction SilentlyContinue))
   if (-not $isAdmin) {
     Write-Host 'Windows Wi-Fi report (netsh wlan show wlanreport) needs administrator rights - relaunch MSP Tool elevated to generate it.' -ForegroundColor Yellow
   } else {
-    $ans = Read-Host 'Generate the Windows Wi-Fi report (last 3 days of Wi-Fi sessions, disconnects and errors)? (y/N)'
-    if ($ans -match '^[Yy]') {
+    # Defaults to yes after $promptTimeoutSec s; n (or Cancel in the GUI) skips it
+    $ans = Read-TimedAnswer -Prompt 'Generate the Windows Wi-Fi report (last 3 days of Wi-Fi sessions, disconnects and errors)? (Y/n)' -Default 'y'
+    if ($null -ne $ans -and "$ans".Trim() -notmatch '^(?i)(n|no)$') {
       Write-Host 'Generating Wi-Fi report...'
       $wlanStarted = (Get-Date).AddSeconds(-5)
       $wlanOut = Invoke-NativeQuiet { netsh wlan show wlanreport }
@@ -170,4 +210,15 @@ if ($issues.Count) {
   $issues | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
 } else {
   Write-Host 'All network checks passed.' -ForegroundColor Green
+}
+
+# ---------------- Text report ----------------
+try {
+  if (-not (Test-Path $reportDir)) { New-Item -ItemType Directory -Path $reportDir -Force | Out-Null }
+  $reportPath = Join-Path $reportDir "network-test-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+  $reportLines | Out-File -FilePath $reportPath -Encoding UTF8
+  Write-Host ''
+  Write-Host "Report saved: $reportPath" -ForegroundColor Green
+} catch {
+  Write-Host "Could not save the text report: $($_.Exception.Message)" -ForegroundColor Red
 }
